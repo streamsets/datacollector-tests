@@ -23,6 +23,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import pytest
+from streamsets.sdk.exceptions import RunError, RunningError
 from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string, Version
 from xlwt import Workbook
@@ -1271,6 +1272,125 @@ def test_s3_excel_last_sheet_empty(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('5.9.0')
+def test_excel_with_duplicated_headers(sdc_builder, sdc_executor, aws):
+    """
+    Tests that the Excel parser throws the proper Error if the "With Header Line" option is set and there is at least a
+    couple of columns that have the same header.
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
+
+    logger.info('Creating the excel file ...')
+    workbook = Workbook(encoding='utf-8')
+    sheet = workbook.add_sheet('sheet1')
+
+    sheet.write(0, 0, 'Col1')
+    sheet.write(0, 1, 'Col2')
+    sheet.write(0, 2, 'Col1')
+
+    sheet.write(1, 0, '1')
+    sheet.write(1, 1, '2')
+    sheet.write(1, 2, '3')
+
+    file_excel = io.BytesIO()
+    workbook.save(file_excel)
+    file_excel.seek(0)
+
+    logger.info('Creating the pipeline ...')
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(
+        bucket=s3_bucket,
+        data_format='EXCEL',
+        excel_header_option='WITH_HEADER',
+        prefix_pattern=f'**/{pattern}*',
+        common_prefix=f'{s3_key}',
+        on_record_error='STOP_PIPELINE'
+    )
+
+    wiretap = builder.add_wiretap()
+    s3_origin >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        logger.info('Uploading the excel file to the S3 bucket ...')
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}', Fileobj=file_excel)
+
+        try:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert False, 'A stage exception should have been thrown arising a RunError'
+        except (RunError, RunningError) as e:
+            assert 'EXCEL_PARSER_08' in e.message
+    finally:
+        # Clean up S3.
+        aws.delete_s3_data(s3_bucket, s3_key)
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@aws('s3')
+@sdc_min_version('5.9.0')
+def test_csv_with_duplicated_headers(sdc_builder, sdc_executor, aws):
+    """
+    Tests that the Delimited parser throws the proper Error if the "With Header Line" option is set and there is at
+    least a couple of columns that have the same header.
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
+
+    test_data = f"Col1,Col2,Col1\n" \
+           f"1,2,3\n"
+
+    logger.info('Creating the pipeline ...')
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(
+        bucket=s3_bucket,
+        data_format='DELIMITED',
+        header_line='WITH_HEADER',
+        prefix_pattern=f'**/{pattern}*',
+        common_prefix=f'{s3_key}',
+        on_record_error='STOP_PIPELINE'
+    )
+
+    wiretap = builder.add_wiretap()
+    s3_origin >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        logger.info('Uploading the excel file to the S3 bucket ...')
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}', Body=test_data)
+
+        try:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert False, 'A stage exception should have been thrown arising a RunError'
+        except (RunError, RunningError) as e:
+            assert 'DELIMITED_PARSER_03' in e.message
+    finally:
+        # Clean up S3.
+        aws.delete_s3_data(s3_bucket, s3_key)
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@aws('s3')
 @sdc_min_version('3.11.0')
 def test_s3_origin_events(sdc_builder, sdc_executor, aws):
     """Test simple scenario of generating events:
@@ -2154,7 +2274,7 @@ def test_pipeline_retry_for_exceptions_with_on_error_record_action_stop_pipeline
         bucket=s3_bucket,
         data_format='JSON',
         prefix_pattern=s3_file_name,
-        common_prefix = s3_common_prefix,
+        common_prefix=s3_common_prefix,
         on_record_error='STOP_PIPELINE'
     )
 
