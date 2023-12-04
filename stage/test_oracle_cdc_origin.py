@@ -6496,6 +6496,98 @@ def test_fetch_strategy(
     # )
 
 
+@sdc_min_version('5.8.0')
+@database('oracle')
+@pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+@pytest.mark.parametrize('parse_unsupported_operations', [True, False])
+def test_unsupported_operation(
+    sdc_builder,
+    sdc_executor,
+    database,
+    buffer_locally,
+    buffer_location,
+    parse_unsupported_operations,
+):
+    """Test that unsupported operations are recognized and warned about by the stage.
+    """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
+    db_engine = database.engine
+    pipeline = None
+    table = None
+
+    try:
+        table_name = get_random_string(string.ascii_uppercase, 9)
+        primary_column = get_random_string(string.ascii_uppercase, 9)
+        # Operations involving the column will generate UNSUPPORTED operations
+        too_long_column = get_random_string(string.ascii_uppercase, 126)
+
+        connection = db_engine.connect()
+
+        table = sqlalchemy.Table(table_name,
+                                 sqlalchemy.MetaData(),
+                                 sqlalchemy.Column(primary_column, sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column(too_long_column, sqlalchemy.Integer))
+        table.create(db_engine)
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+
+        logger.info('Using table pattern %s', table_name)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = _get_oracle_cdc_client_origin(connection=connection,
+                                                          database=database,
+                                                          sdc_builder=sdc_builder,
+                                                          pipeline_builder=pipeline_builder,
+                                                          buffer_locally=buffer_locally,
+                                                          buffer_location=buffer_location,
+                                                          src_table_name=table_name,
+                                                          scan_unsupported_operations=parse_unsupported_operations,
+                                                          )
+
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        # Why do we need to wait?
+        # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
+        # If the DB is ahead, the batch end time the origin may not be after all the changes were written to the DB.
+        # So we wait until the time here is past the time at which all data was written out to the DB (current time)
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+
+        records = [{primary_column: 1, too_long_column: 1}]
+        txn = connection.begin()
+        connection.execute(table.insert(), records)
+        if parse_unsupported_operations:
+            txn.commit()
+            sdc_executor.wait_for_pipeline_status(pipeline, 'RUN_ERROR')
+            status = sdc_executor.get_pipeline_status(pipeline).response.json()
+            assert "JDBC_700" in status.get("message")
+
+        else:
+            txn.commit()
+            sleep(SHORT_WAIT_TIME)
+
+    finally:
+        if pipeline is not None and not parse_unsupported_operations:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', table_name)
+
+
 def _get_oracle_cdc_client_origin(connection,
                                   database,
                                   sdc_builder,
