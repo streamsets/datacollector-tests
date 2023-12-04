@@ -6571,10 +6571,16 @@ def test_unsupported_operation(
         connection.execute(table.insert(), records)
         if parse_unsupported_operations:
             txn.commit()
-            sdc_executor.wait_for_pipeline_status(pipeline, 'RUN_ERROR')
-            status = sdc_executor.get_pipeline_status(pipeline).response.json()
-            assert "JDBC_700" in status.get("message")
-
+            checks = 30
+            interval_in_seconds = 1
+            error_statuses = {"RUN_ERROR", "RUNNING_ERROR"}
+            status = {}
+            for _ in range(checks):
+                status = sdc_executor.get_pipeline_status(pipeline).response.json()
+                if status['status'] in error_statuses:
+                    break
+                sleep(interval_in_seconds)
+            assert status["status"] in error_statuses and "JDBC_700" in status.get("message")
         else:
             txn.commit()
             sleep(SHORT_WAIT_TIME)
