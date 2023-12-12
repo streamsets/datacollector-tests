@@ -24,7 +24,7 @@ import pyarrow.parquet as pq
 
 import pytest
 from streamsets.sdk.exceptions import RunError, RunningError
-from streamsets.testframework.markers import aws, sdc_min_version, large
+from streamsets.testframework.markers import aws, sdc_min_version, large, emr_external_id
 from streamsets.testframework.utils import get_random_string, Version
 from xlwt import Workbook
 
@@ -2305,3 +2305,58 @@ def test_pipeline_retry_for_exceptions_with_on_error_record_action_stop_pipeline
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
+
+
+@aws('s3')
+@emr_external_id
+@sdc_min_version('5.9.0')
+def test_s3_origin_assume_role_with_external_id(sdc_builder, sdc_executor, aws):
+    """
+    Test to try to read the information on s3_origin using an external id.
+
+    S3_origin_pipeline:
+         s3.origin >> wiretap
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
+
+    records_per_file = 3
+    data_file = 'data-file.txt'
+    test_data = [f'Message {i}' for i in range(records_per_file)]
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
+                          prefix_pattern=f'**/{pattern}*',
+                          common_prefix=f'{s3_key}',
+                          set_session_tags=False)
+
+    records_wiretap = builder.add_wiretap()
+
+    origin >> records_wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file}',
+                          Body='\n'.join(test_data).encode('ascii'))
+
+        # Run until finished-file
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_file, timeout_sec=120)
+
+        output_records = [record.field['text'] for record in records_wiretap.output_records]
+
+        # Assert that 3 records have been read
+        assert records_per_file == len(output_records), 'The number of outputs records is wrong.'
+        assert output_records == test_data, 'Output records were not in the expected format.'
+
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)

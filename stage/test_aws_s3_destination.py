@@ -17,7 +17,7 @@ import pytest
 import string
 
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.markers import aws, sdc_min_version, emr_external_id
 from streamsets.testframework.utils import get_random_string
 
 from .utils.utils_aws import configure_stage_for_anonymous, \
@@ -872,3 +872,65 @@ def test_s3_destination_acl(sdc_builder, sdc_executor, aws, acl):
                                                    >> to_error """
 
     _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, True, acl=acl)
+
+
+@aws('s3')
+@emr_external_id
+@sdc_min_version('5.9.0')
+def test_s3_destination_assume_role_with_external_id(sdc_builder, sdc_executor, aws):
+    """
+    Test using a prefix, suffix, and partition for S3, and check if the result contains the prefix, suffix,
+    and partition.
+
+    S3_destination_pipeline:
+        dev_raw_data_source >> s3.destination >> wiretap
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    external_id = aws.emr_external_id
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}' \
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket=s3_bucket,
+                                  data_format='JSON',
+                                  partition_prefix=s3_key,
+                                  set_session_tags=False)
+
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> s3_destination
+    s3_destination >= wiretap.destination
+
+    pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+
+        # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert json.loads(s3_contents) == json.loads(raw_str), 'Wrong json value or empty value.'
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)

@@ -17,7 +17,7 @@ import string
 import time
 
 import pytest
-from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.markers import aws, sdc_min_version, emr_external_id
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -359,6 +359,57 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
                           for record in wiretap.output_records]
 
         assert set(output_records) == expected_messages
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+@aws('kinesis')
+@emr_external_id
+@sdc_min_version('5.9.0')
+def test_kinesis_consumer_assume_role_with_external_id(sdc_builder, sdc_executor, aws):
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name,
+                                    set_session_tags=False)
+
+    wiretap = builder.add_wiretap()
+
+    kinesis_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build(title='Kinesis Consumer pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    # run pipeline
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        output_records = [record.field['text'].value
+                          for record in wiretap.output_records]
+
+        assert set(output_records) == expected_messages, "Wrong expected messages for output_records v"
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
