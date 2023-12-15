@@ -1264,3 +1264,146 @@ def test_set_lob_locator(
     status = sdc_executor.get_pipeline_status(pipeline).response.json()
     assert status.get("status") not in {"RUN_ERROR", "RUNNING_ERROR"} or "ORACLE_CDC_1137" not in status.get("message")
 
+
+@sdc_min_version("5.8.1")
+def test_lob_ops_with_lobs_disabled(
+        sdc_builder,
+        sdc_executor,
+        database,
+        oracle_stage_name,
+        cleanup,
+        database_version,
+        table_name,
+        test_name,
+        blob_file_specs,
+):
+    """
+    Perform several LOB operations and verify they are not scanned by LogMiner if
+    LOB support is disabled in the stage. (COLLECTOR-4622)
+
+    1. Create two tables: with and without lob, A and B respectively.
+    2. Set the Oracle stage to track both tables.
+    3. Insert some values in A.
+    4. Do LOB operations in B.
+    5. Insert more values in A.
+    6. Check that the two inserts of A are present.
+    """
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
+    # Create a unique id or primary key for each row that will be inserted
+    primary_column = DEFAULT_PK_COLUMN  # Primary column will always be present
+    blob_column = DEFAULT_LOB_COLUMN
+    scanned_column = "SCANNED"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, file_length, file_content = blob_file_specs
+    primary_key = randint(10000, 100000)
+    scanned_value = randint(10000, 100000)
+
+    table_with_lob_name = table_name + "1"
+    table_without_lob_name = table_name + "2"
+
+    table_with_lob = sqlalchemy.Table(
+        table_with_lob_name,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column(primary_column, sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column(blob_column, sqlalchemy.BLOB),
+    )
+
+    table_without_lob = sqlalchemy.Table(
+        table_without_lob_name,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column(primary_column, sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column(scanned_column, sqlalchemy.Integer),
+    )
+
+    connection = database.engine.connect()
+    cleanup(connection.close)
+
+    table_with_lob.create(database.engine)
+    cleanup(table_with_lob.drop, database.engine)
+    table_without_lob.create(database.engine)
+    cleanup(table_without_lob.drop, database.engine)
+
+    # Build and start the pipeline.
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        large_data_types=[],
+        tables_filter=[{"tablesInclusionPattern": f"{table_name}.*"}],
+        **DefaultConnectionParameters(database)
+        | DefaultStartParameters(database),
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_cdc >> wiretap.destination
+
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    handler.start_work(work)
+    cleanup(handler.stop_work, work)
+
+    txn = connection.begin()
+
+    # Insert operation (scanned).
+    connection.execute(table_without_lob.insert({primary_column: primary_key, scanned_column: scanned_value}))
+
+    # LOB_WRITE (not scanned).
+    connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+    connection.execute(
+        f"""DECLARE
+                dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                f_lob BFILE;
+                b_lob BLOB;
+            BEGIN
+                f_lob := bfilename(dir, imgFile);
+                INSERT INTO {table_with_lob_name} VALUES ({primary_key}, EMPTY_BLOB())
+                RETURNING {blob_column} INTO b_lob;
+
+                DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                COMMIT;
+                DBMS_LOB.FILECLOSE(f_lob);
+            END;"""
+    )
+
+    # LOB_TRIM (not scanned).
+    trim_length = 10
+    connection.execute(
+        f"""DECLARE
+                loc_b BLOB;
+            BEGIN
+                SELECT "{blob_column}" INTO loc_b FROM {table_with_lob_name} WHERE {primary_column} = {primary_key} FOR UPDATE;
+                dbms_lob.trim(loc_b, {trim_length});
+                COMMIT;
+            END;"""
+    )
+
+    # LOB_ERASE (not scanned).
+    erase_length = 1
+    erase_offset = 1
+    connection.execute(
+        f"""DECLARE
+                loc_b BLOB;
+                e_len NUMBER := {erase_length};
+            BEGIN
+                SELECT "{blob_column}" INTO loc_b FROM {table_with_lob_name} WHERE {primary_column} = {primary_key} FOR UPDATE;
+                dbms_lob.erase(loc_b, e_len, {erase_offset});
+                COMMIT;
+            END;"""
+    )
+
+    # Second insert operation.
+    connection.execute(table_without_lob.insert({primary_column: primary_key+1, scanned_column: scanned_value+1}))
+    txn.commit()
+
+    # Wait for the 2 insert operations.
+    handler.wait_for_metric(work, "input_record_count", 2, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+    assert len(wiretap.output_records) == 2
+    status = sdc_executor.get_pipeline_status(pipeline).response.json()
+    assert status.get("status") not in {"RUN_ERROR", "RUNNING_ERROR"} or "ORACLE_CDC_1137" not in status.get("message")
+
