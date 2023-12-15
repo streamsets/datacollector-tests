@@ -16,10 +16,12 @@ r"""Tools used for the revamped Oracle CDC Origin"""
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 from datetime import datetime, timedelta
-import logging
+from random import randint
 from typing import Callable
 
+import logging
 import pytest
+import sqlalchemy
 import string
 
 from streamsets.testframework.environment import Database
@@ -33,6 +35,13 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME = ""  # The value will be assigned during setup
 SYSTEM_IDENTIFIER = ""  # The value will be assigned during setup
 DB_VERSION = 0  # The value will be assigned during setup
+
+DEFAULT_PK_COLUMN = "IDCOL"
+DEFAULT_LOB_COLUMN = "LOBCOL"
+
+EMPTY_BLOB = b"EMPTY_BLOB()"
+EMPTY_BLOB_STRING = "EMPTY_BLOB()"
+EMPTY_CLOB = "EMPTY_CLOB()"
 
 # Versions
 FEAT_VER_FETCH_STRATEGY = Version("5.6.0")
@@ -289,3 +298,180 @@ class DefaultWaitParameters(Parameters):
             "wait_time_after_session_start_in_ms": 0,
             "wait_time_after_session_end_in_ms": 0,
         }
+
+
+
+def blob_write_stmt(dir_name, file_name, source_table_name, primary_key, blob_column_name, repetitions=1):
+    return f"""DECLARE
+            dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+            imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+            f_lob BFILE;
+            b_lob BLOB;
+        BEGIN
+            f_lob := bfilename(dir, imgFile);
+            INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_BLOB(), EMPTY_BLOB())
+            RETURNING {blob_column_name} INTO b_lob;
+
+            DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+            {'DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));' * repetitions}
+            COMMIT;
+            DBMS_LOB.FILECLOSE(f_lob);
+        END;"""
+
+
+def clob_write_stmt(dir_name, file_name, source_table_name, primary_key, clob_column_name, load_parameters):
+    return f"""DECLARE
+            dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+            imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+            f_lob BFILE;
+            c_lob CLOB;
+            v_dest_offset NUMBER := 1;
+            v_src_offset NUMBER := 1;
+            v_warning NUMBER;
+            v_lang_context NUMBER := DBMS_LOB.DEFAULT_LANG_CTX;
+        BEGIN
+            f_lob := bfilename(dir, imgFile);
+            INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_CLOB())
+            RETURNING {clob_column_name} INTO c_lob;
+
+            DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+            DBMS_LOB.LOADCLOBFROMFILE({load_parameters});
+            COMMIT;
+            DBMS_LOB.FILECLOSE(f_lob);
+        END;"""
+
+
+def blob_from_file(db):
+    """Retrieve data about a binary file in the filesystem, namely path, filename, content and size.
+    The 'ls' executable has been chosen as it will be available in most testing environments.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = DEFAULT_PK_COLUMN
+    size_column_name = "SIZECOL"
+    blob_column_name = DEFAULT_LOB_COLUMN
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path = "/usr/bin/"
+    file_name = "ls"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    logger.info(f"Retrieving data for binary file {dir_path}{dir_name}")
+
+    with ExitStack() as on_exit:
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(size_column_name, sqlalchemy.Integer),
+            sqlalchemy.Column(blob_column_name, sqlalchemy.BLOB),
+        )
+
+        source_table.create(db.engine)
+        on_exit.callback(source_table.drop, db.engine)
+
+        connection = db.engine.connect()
+
+        try:
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        lobFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, lobFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key},  DBMS_LOB.GETLENGTH(f_lob), EMPTY_BLOB())
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        length, content = connection.execute(
+            f"SELECT {size_column_name}, {blob_column_name} FROM {source_table_name}"
+        ).fetchall()[0]
+
+    return dir_path, file_name, length, content
+
+
+def clob_from_file(db):
+    """Retrieve data about a text executable file in the filesystem, namely path, filename, content and size.
+    The 'gpg-zip' executable script has been chosen as it should be available in most testing environments.
+
+    IMPORTANT: if this test fails, it is probably due to the gpg-zip file not being available in the testing
+    environment. Change the file_name variable to point to another text file that is big enough for
+    oracle to split the LOB_WRITE into multiple records.
+
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = DEFAULT_PK_COLUMN
+    clob_column_name = DEFAULT_LOB_COLUMN
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path = "/usr/bin/"
+    file_name = "gpg-zip"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    logger.info(f"Retrieving data for binary file {dir_path}{dir_name}")
+
+    with ExitStack() as on_exit:
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(clob_column_name, sqlalchemy.CLOB),
+        )
+
+        source_table.create(db.engine)
+        on_exit.callback(source_table.drop, db.engine)
+
+        connection = db.engine.connect()
+
+        try:
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            load_parameters = (
+                "c_lob, f_lob, DBMS_LOB.LOBMAXSIZE, v_dest_offset, v_src_offset,"
+                " DBMS_LOB.DEFAULT_CSID, v_lang_context, v_warning"
+            )
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        lobFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        c_lob CLOB;
+                        v_dest_offset NUMBER := 1;
+                        v_src_offset NUMBER := 1;
+                        v_warning NUMBER;
+                        v_lang_context NUMBER := DBMS_LOB.DEFAULT_LANG_CTX;
+                    BEGIN
+                        f_lob := bfilename(dir, lobFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_CLOB())
+                        RETURNING {clob_column_name} INTO c_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADCLOBFROMFILE({load_parameters});
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        content = connection.execute(f"SELECT {clob_column_name} FROM {source_table_name}").fetchall()[0][0]
+
+    return dir_path, file_name, len(content), content
+

@@ -21,6 +21,7 @@ import string
 
 from contextlib import ExitStack
 from requests.exceptions import JSONDecodeError
+from random import randint
 from time import sleep
 
 from streamsets.sdk.exceptions import StartError, ValidationError
@@ -34,12 +35,15 @@ from stage.utils.utils_oracle import (
     DefaultTableParameters,
     DefaultStartParameters,
     DefaultWaitParameters,
+    DEFAULT_PK_COLUMN,
+    DEFAULT_LOB_COLUMN,
     FETCH_PARAMETERS,
     FEAT_VER_FETCH_STRATEGY,
     MIN_ORACLE_VERSION,
     RELEASE_VERSION,
     NoError,
     StartMode,
+    blob_from_file,
     database_version,
     oracle_stage_name,
     service_name,
@@ -59,6 +63,11 @@ PRECEDENCES = [PIPELINE, TABLE]
 
 logger = logging.getLogger(__name__)
 pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
+
+
+@pytest.fixture(scope="module")  # Cache the fixture to avoid reading/writing the BLOB each time the fixture is called
+def blob_file_specs(sdc_builder, sdc_executor, database):
+    return blob_from_file(database)
 
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
@@ -1134,3 +1143,124 @@ def test_fetch_strategy(
     #         fetch_strategy=fetch_strategy,
     #         fetch_overflow=fetch_overflow,
     #     )
+
+
+@sdc_min_version("5.8.1")
+def test_set_lob_locator(
+        sdc_builder,
+        sdc_executor,
+        database,
+        oracle_stage_name,
+        cleanup,
+        database_version,
+        table_name,
+        test_name,
+        blob_file_specs,
+):
+    """
+    Perform several LOB operations that create a SET_LOB_OPERATOR in the redo-log and
+    verify that they are not scanned by LogMiner. (COLLECTOR-4598)
+
+    SELECT_LOB_LOCATOR will be generated before every LOB operation.
+    We verify that operations that come after a set of LOB_OPERATIONS
+    have been correctly parsed and converted into records.
+    For that we: LOB_WRITE, LOB_TRIM, LOB_ERASE and INSERT.
+    """
+
+    # Create a unique id or primary key for each row that will be inserted
+    primary_column = DEFAULT_PK_COLUMN  # Primary column will always be present
+    blob_column = DEFAULT_LOB_COLUMN
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, file_length, file_content = blob_file_specs
+    primary_key = randint(10000, 100000)
+
+    table = sqlalchemy.Table(
+        table_name,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column(primary_column, sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column(blob_column, sqlalchemy.BLOB),
+    )
+
+    connection = database.engine.connect()
+    cleanup(connection.close)
+
+    table.create(database.engine)
+    cleanup(table.drop, database.engine)
+
+    # Build and start the pipeline.
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        large_data_types=[{"dataType": "BLOB", "maxSize": -1}],
+        **DefaultConnectionParameters(database)
+        | DefaultTableParameters(table_name)
+        | DefaultStartParameters(database),
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_cdc >> wiretap.destination
+
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    handler.start_work(work)
+
+    txn = connection.begin()
+
+    # LOB_WRITE.
+    connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+    connection.execute(
+        f"""DECLARE
+                dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                f_lob BFILE;
+                b_lob BLOB;
+            BEGIN
+                f_lob := bfilename(dir, imgFile);
+                INSERT INTO {table_name} VALUES ({primary_key}, EMPTY_BLOB())
+                RETURNING {blob_column} INTO b_lob;
+
+                DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                COMMIT;
+                DBMS_LOB.FILECLOSE(f_lob);
+            END;"""
+    )
+
+    # LOB_TRIM.
+    trim_length = 10
+    connection.execute(
+        f"""DECLARE
+                loc_b BLOB;
+            BEGIN
+                SELECT "{blob_column}" INTO loc_b FROM {table_name} WHERE {primary_column} = {primary_key} FOR UPDATE;
+                dbms_lob.trim(loc_b, {trim_length});
+                COMMIT;
+            END;"""
+    )
+
+    # LOB_ERASE.
+    erase_length = 1
+    erase_offset = 1
+    connection.execute(
+        f"""DECLARE
+                loc_b BLOB;
+                e_len NUMBER := {erase_length};
+            BEGIN
+                SELECT "{blob_column}" INTO loc_b FROM {table_name} WHERE {primary_column} = {primary_key} FOR UPDATE;
+                dbms_lob.erase(loc_b, e_len, {erase_offset});
+                COMMIT;
+            END;"""
+    )
+
+    connection.execute(table.table.insert().values({primary_column: primary_key+1, blob_column: None}))
+    txn.commit()
+
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    insert_record = wiretap.output_records[-1]
+    assert insert_record.field[primary_column] == primary_key+1
+
+    status = sdc_executor.get_pipeline_status(pipeline).response.json()
+    assert status.get("status") not in {"RUN_ERROR", "RUNNING_ERROR"} or "ORACLE_CDC_1137" not in status.get("message")
+
