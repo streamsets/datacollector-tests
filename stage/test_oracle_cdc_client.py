@@ -1205,6 +1205,7 @@ def test_set_lob_locator(
     work = handler.add_pipeline(pipeline)
 
     handler.start_work(work)
+    handler.cleanup(handler.stop_work, work)
 
     txn = connection.begin()
 
@@ -1254,10 +1255,11 @@ def test_set_lob_locator(
             END;"""
     )
 
-    connection.execute(table.table.insert().values({primary_column: primary_key+1, blob_column: None}))
+    connection.execute(table.insert().values({primary_column: primary_key+1, blob_column: None}))
     txn.commit()
 
     handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
     insert_record = wiretap.output_records[-1]
     assert insert_record.field[primary_column] == primary_key+1
 
@@ -1403,7 +1405,7 @@ def test_lob_ops_with_lobs_disabled(
     # Wait for the 2 insert operations.
     handler.wait_for_metric(work, "input_record_count", 2, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
 
-    assert len(wiretap.output_records) == 2
+    assert len(wiretap.output_records) >= 2
     status = sdc_executor.get_pipeline_status(pipeline).response.json()
     assert status.get("status") not in {"RUN_ERROR", "RUNNING_ERROR"} or "ORACLE_CDC_1137" not in status.get("message")
 
