@@ -172,3 +172,65 @@ def test_parse_parquet(sdc_builder, sdc_executor):
             sdc_executor.stop_pipeline(pipeline)
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
 
+
+@sdc_min_version('5.9.0')
+def test_parquet_nullable_fields(sdc_builder, sdc_executor):
+    """Test to check that nullable fields option works when inferring schema.
+
+       raw data source >> LocalFS
+
+       We use pyarrow.parquet to check parquet file is properly formatted
+    """
+
+    temp_dir = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # create raw data
+    data =[]
+    data.append({"id": 1, "text": get_random_string(), "text2": get_random_string()})
+    data.append({"id": 2, "text": None, "text2": get_random_string()})
+    data.append({"id": 3, "text": get_random_string(), "text2": get_random_string()})
+
+    # dev raw data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    raw_data = '\n'.join(json.dumps(row) for row in data)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    stage = dev_raw_data_source
+
+    # local FS
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='PARQUET',
+                            parquet_schema_location='INFER',
+                            nullable_fields=False,
+                            directory_template=temp_dir)
+
+    stage >> local_fs
+
+    pipeline = pipeline_builder.build()
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Define a custom schema with nullable fields
+        custom_schema = pa.schema([
+            ('id', pa.int32()),
+            ('text', pa.string()),
+            ('text2', pa.string())
+        ])
+
+        with tempfile.NamedTemporaryFile() as tmp:
+             base64_parquet = sdc_executor.execute_shell(f'cat {temp_dir}/* | openssl base64 -A').stdout
+             tmp.write(base64.b64decode(base64_parquet))
+             tmp.flush()
+             parquet = pq.read_table(tmp, schema=custom_schema)
+
+        assert parquet.num_rows == len(data), 'Wrong number of records!'
+        assert parquet.num_columns == len(data[0].keys()), 'Wrong number of fields!'
+        for parquet_record, record in zip(parquet.to_pylist(), data):
+            assert parquet_record == record, f'Wrong record found: "{parquet_record}"'
+
+    finally:
+        sdc_executor.execute_shell(f'rm -rf {temp_dir}')
