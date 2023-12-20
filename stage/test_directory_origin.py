@@ -2377,7 +2377,7 @@ def test_directory_origin_with_file_processing_delay(sdc_builder, sdc_executor, 
             sys_time = sdc_executor.execute_shell(f"date '+{date_format}'").stdout.strip()
             read_time = datetime.datetime.strptime(sys_time, date_format)
 
-        cmd.wait_for_pipeline_output_records_count(2, timeout_sec=3000)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2, timeout_sec=3000)
         sys_time = sdc_executor.execute_shell(f"date '+{date_format}'").stdout.strip()
         read_time = datetime.datetime.strptime(sys_time, date_format)
 
