@@ -223,6 +223,7 @@ def test_sql_server_cdc_with_specific_capture_instance_name(
 
 
 @database('sqlserver')
+@sdc_min_version('5.8.0')
 @pytest.mark.parametrize('automatically_reset_offset_after_cleanup', [False, True])
 def test_sql_server_cdc_check_offset_after_cleanup(
         sdc_builder,
@@ -243,8 +244,8 @@ def test_sql_server_cdc_check_offset_after_cleanup(
     With the pipeline stopped, trigger the CDC Cleanup Process on the main CDC table (all data is erased).
 
     When running the same pipeline again:
-    - if not automatically_reset_offset_after_cleanup or SDC version < 5.8.0 -> the CDC offset is kept leading to a
-      JDBC_78 Stage Error on the origin (default behaviour)
+    - if not automatically_reset_offset_after_cleanup -> the CDC offset is kept leading to a JDBC_78 Stage Error on
+      the origin (default behaviour)
     - When automatically_reset_offset_after_cleanup is activated -> the offset is removed and no stage errors are
       present. It treats the table as if it was newly added.
     """
@@ -316,7 +317,7 @@ def test_sql_server_cdc_check_offset_after_cleanup(
             f"CDC Table Rows After CDC Cleanup: {no_rows_cdc_table_after_cleanup}"
 
         expected_pipeline_status = 'FINISHED'
-        if not automatically_reset_offset_after_cleanup or Version(sdc_builder.version) < Version('5.8.0'):
+        if not automatically_reset_offset_after_cleanup:
             expected_pipeline_status = 'RUN_ERROR'
 
         # Run the pipeline again to check the expected status
@@ -329,17 +330,15 @@ def test_sql_server_cdc_check_offset_after_cleanup(
             f"Pipeline status expected to be '{expected_pipeline_status}', but got '{pipeline_status}' instead"
 
     finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
         if pipeline is not None:
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+                sdc_executor.stop_pipeline(pipeline)
             logger.info('Removing pipeline %s...', pipeline.id)
             sdc_executor.remove_pipeline(pipeline)
-        if table is not None:
-            logger.info('Dropping table %s in %s database...', table, database.type)
-            table.drop(database.engine)
-        if aux_table is not None:
-            logger.info('Dropping table %s in %s database...', aux_table, database.type)
-            aux_table.drop(database.engine)
+        for tbl in [table, aux_table]:
+            if tbl is not None:
+                logger.info('Dropping table %s in %s database...', tbl, database.type)
+                tbl.drop(database.engine)
         if connection is not None:
             logger.info('Closing connection to %s database...', database.type)
             connection.close()
