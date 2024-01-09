@@ -12,27 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A module to test the ADLS Gen1 File Metadata and ADLS Gen2 File Metadata stages"""
+"""A module to test the ADLS Gen2 File Metadata stages"""
 # Tests based on test_hdfs_metadata.py
-# Some helper code based on test_azure_datalake_gen1_stages.py and test_azure_datalake_gen2_stages.py
+# Some helper code based on test_azure_datalake_gen2_stages.py
 
 import json
 import logging
 import string
-from collections import namedtuple
-from operator import itemgetter
 
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-ADLS_GEN1_FILE_METADATA = 'ADLS Gen1 File Metadata'
 ADLS_GEN2_FILE_METADATA = 'ADLS Gen2 File Metadata'
 
 STORAGE_V1 = 'Storage'
 STORAGE_V2 = 'StorageV2'
 
-ADLS_GEN1_TARGET = 'com_streamsets_pipeline_stage_destination_datalake_gen1_DataLakeDTarget'
 ADLS_GEN2_TARGET = 'com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget'
 
 logger = logging.getLogger(__name__)
@@ -40,8 +36,6 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(autouse=True)
 def storage_type_check(azure, executor_name):
-    if executor_name == ADLS_GEN1_FILE_METADATA and azure.storage_type != STORAGE_V1:
-        pytest.skip('ADLS Gen1 and Legacy Gen1 tests require storage type to be of Gen1.')
     if executor_name == ADLS_GEN2_FILE_METADATA and azure.storage_type != STORAGE_V2:
         pytest.skip('ADLS Gen2 tests require storage type to be of Gen2.')
 
@@ -67,8 +61,6 @@ def create_adls_metadata_pipeline(pipeline_builder, azure, pipeline_title, direc
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
 
-    if azure.storage_type == STORAGE_V1:
-        adls_stage_name = ADLS_GEN1_TARGET
     if azure.storage_type == STORAGE_V2:
         adls_stage_name = ADLS_GEN2_TARGET
     adls_destination = pipeline_builder.add_stage(name=adls_stage_name)
@@ -148,8 +140,7 @@ def delete_dir(azure, directory_name):
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('executor_name', [ADLS_GEN1_FILE_METADATA, ADLS_GEN2_FILE_METADATA])
-def test_datalake_metadata_remove(sdc_builder, sdc_executor, azure, executor_name):
+def test_datalake_metadata_remove(sdc_builder, sdc_executor, azure):
     """ADLS File Metadata with Remove File Task
     The data is written to an ADLS file then removed by ADLS File Metadata executor.
     """
@@ -158,13 +149,13 @@ def test_datalake_metadata_remove(sdc_builder, sdc_executor, azure, executor_nam
     files_suffix = 'json'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    adls_metadata = pipeline_builder.add_stage(executor_name, type='executor')
+    adls_metadata = pipeline_builder.add_stage(ADLS_GEN2_FILE_METADATA, type='executor')
     adls_metadata.set_attributes(task='REMOVE_FILE',
                                  file_path="${record:value('/filepath')}")
 
     pipeline = create_adls_metadata_pipeline(pipeline_builder,
                                              azure,
-                                             f'ADLS File Metadata Remove Task ({executor_name})',
+                                             f'ADLS File Metadata Remove Task ({ADLS_GEN2_FILE_METADATA})',
                                              directory_name,
                                              files_prefix,
                                              files_suffix,
@@ -183,8 +174,7 @@ def test_datalake_metadata_remove(sdc_builder, sdc_executor, azure, executor_nam
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('executor_name', [ADLS_GEN1_FILE_METADATA, ADLS_GEN2_FILE_METADATA])
-def test_datalake_metadata_rename(sdc_builder, sdc_executor, azure, executor_name):
+def test_datalake_metadata_rename(sdc_builder, sdc_executor, azure):
     """ADLS File Metadata with Rename File Task
     The data is written to an ADLS file then renamed by ADLS File Metadata executor.
     """
@@ -194,7 +184,7 @@ def test_datalake_metadata_rename(sdc_builder, sdc_executor, azure, executor_nam
     new_file_name = 'new_file_name.txt'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    adls_metadata = pipeline_builder.add_stage(executor_name, type='executor')
+    adls_metadata = pipeline_builder.add_stage(ADLS_GEN2_FILE_METADATA, type='executor')
     adls_metadata.set_attributes(task='CHANGE_EXISTING_FILE',
                                  file_path="${record:value('/filepath')}",
                                  rename=True,
@@ -202,7 +192,7 @@ def test_datalake_metadata_rename(sdc_builder, sdc_executor, azure, executor_nam
 
     pipeline = create_adls_metadata_pipeline(pipeline_builder,
                                              azure,
-                                             f'ADLS File Metadata Rename Task ({executor_name})',
+                                             f'ADLS File Metadata Rename Task ({ADLS_GEN2_FILE_METADATA})',
                                              directory_name,
                                              files_prefix,
                                              files_suffix,
@@ -222,8 +212,7 @@ def test_datalake_metadata_rename(sdc_builder, sdc_executor, azure, executor_nam
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('executor_name', [ADLS_GEN1_FILE_METADATA, ADLS_GEN2_FILE_METADATA])
-def test_datalake_metadata_move_rename(sdc_builder, sdc_executor, azure, executor_name):
+def test_datalake_metadata_move_rename(sdc_builder, sdc_executor, azure):
     """ADLS File Metadata with Move and Rename File Task
     The data is written to an ADLS file then moved and renamed by ADLS File Metadata executor.
     """
@@ -234,7 +223,7 @@ def test_datalake_metadata_move_rename(sdc_builder, sdc_executor, azure, executo
     new_directory_name = get_random_string(string.ascii_letters, 10)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    adls_metadata = pipeline_builder.add_stage(executor_name, type='executor')
+    adls_metadata = pipeline_builder.add_stage(ADLS_GEN2_FILE_METADATA, type='executor')
     adls_metadata.set_attributes(task='CHANGE_EXISTING_FILE',
                                  file_path="${record:value('/filepath')}",
                                  move_file=True,
@@ -244,7 +233,7 @@ def test_datalake_metadata_move_rename(sdc_builder, sdc_executor, azure, executo
 
     pipeline = create_adls_metadata_pipeline(pipeline_builder,
                                              azure,
-                                             f'ADLS File Metadata Move Rename Task ({executor_name})',
+                                             f'ADLS File Metadata Move Rename Task ({ADLS_GEN2_FILE_METADATA})',
                                              directory_name,
                                              files_prefix,
                                              files_suffix,
@@ -266,8 +255,7 @@ def test_datalake_metadata_move_rename(sdc_builder, sdc_executor, azure, executo
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('executor_name', [ADLS_GEN1_FILE_METADATA, ADLS_GEN2_FILE_METADATA])
-def test_datalake_metadata_change_permission_octal(sdc_builder, sdc_executor, azure, executor_name):
+def test_datalake_metadata_change_permission_octal(sdc_builder, sdc_executor, azure):
     """ADLS File Metadata with Change Permission Task
     The data is written to an ADLS file then changed permissions by ADLS File Metadata executor.
     """
@@ -278,7 +266,7 @@ def test_datalake_metadata_change_permission_octal(sdc_builder, sdc_executor, az
     new_permission_octal = '600'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    adls_metadata = pipeline_builder.add_stage(executor_name, type='executor')
+    adls_metadata = pipeline_builder.add_stage(ADLS_GEN2_FILE_METADATA, type='executor')
     adls_metadata.set_attributes(task='CHANGE_EXISTING_FILE',
                                  file_path="${record:value('/filepath')}",
                                  set_permissions=True,
@@ -286,7 +274,7 @@ def test_datalake_metadata_change_permission_octal(sdc_builder, sdc_executor, az
 
     pipeline = create_adls_metadata_pipeline(pipeline_builder,
                                              azure,
-                                             f'ADLS File Metadata Octal Permission Task ({executor_name})',
+                                             f'ADLS File Metadata Octal Permission Task ({ADLS_GEN2_FILE_METADATA})',
                                              directory_name,
                                              files_prefix,
                                              files_suffix,
@@ -299,11 +287,8 @@ def test_datalake_metadata_change_permission_octal(sdc_builder, sdc_executor, az
         dl_files = get_dir(azure, directory_name)
         assert len(dl_files) == 1
         perms = get_perms(azure, dl_files[0])
-        # Gen1 and Gen2 report the perms back with different syntax
-        if azure.storage_type == STORAGE_V1:
-            assert perms[0] == new_permission_octal
-        if azure.storage_type == STORAGE_V2:
-            assert perms[0] == new_permission
+        # Gen2 report the perms back with different syntax
+        assert perms[0] == new_permission
     finally:
         sdc_executor.stop_pipeline(pipeline)
         delete_dir(azure, directory_name)
@@ -311,8 +296,7 @@ def test_datalake_metadata_change_permission_octal(sdc_builder, sdc_executor, az
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('executor_name', [ADLS_GEN1_FILE_METADATA, ADLS_GEN2_FILE_METADATA])
-def test_datalake_metadata_change_permission_unix(sdc_builder, sdc_executor, azure, executor_name):
+def test_datalake_metadata_change_permission_unix(sdc_builder, sdc_executor, azure):
     """ADLS File Metadata with Change Permission Task
     The data is written to an ADLS file then changed permissions by ADLS File Metadata executor.
     """
@@ -323,7 +307,7 @@ def test_datalake_metadata_change_permission_unix(sdc_builder, sdc_executor, azu
     new_permission_octal = '600'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    adls_metadata = pipeline_builder.add_stage(executor_name, type='executor')
+    adls_metadata = pipeline_builder.add_stage(ADLS_GEN2_FILE_METADATA, type='executor')
     adls_metadata.set_attributes(task='CHANGE_EXISTING_FILE',
                                  file_path="${record:value('/filepath')}",
                                  set_permissions=True,
@@ -331,7 +315,7 @@ def test_datalake_metadata_change_permission_unix(sdc_builder, sdc_executor, azu
 
     pipeline = create_adls_metadata_pipeline(pipeline_builder,
                                              azure,
-                                             f'ADLS File Metadata Unix Permission Task ({executor_name})',
+                                             f'ADLS File Metadata Unix Permission Task ({ADLS_GEN2_FILE_METADATA})',
                                              directory_name,
                                              files_prefix,
                                              files_suffix,
@@ -344,11 +328,7 @@ def test_datalake_metadata_change_permission_unix(sdc_builder, sdc_executor, azu
         dl_files = get_dir(azure, directory_name)
         assert len(dl_files) == 1
         perms = get_perms(azure, dl_files[0])
-        # Gen1 and Gen2 report the perms back with different syntax
-        if azure.storage_type == STORAGE_V1:
-            assert perms[0] == new_permission_octal
-        if azure.storage_type == STORAGE_V2:
-            assert perms[0] == new_permission
+        assert perms[0] == new_permission
     finally:
         sdc_executor.stop_pipeline(pipeline)
         delete_dir(azure, directory_name)
@@ -356,7 +336,6 @@ def test_datalake_metadata_change_permission_unix(sdc_builder, sdc_executor, azu
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('executor_name', [ADLS_GEN1_FILE_METADATA, ADLS_GEN2_FILE_METADATA])
 def test_datalake_metadata_create(sdc_builder, sdc_executor, azure, executor_name):
     """ADLS File Metadata with Create File Task
     The data is written to an ADLS file but removed by ADLS File Metadata executor.
@@ -366,13 +345,13 @@ def test_datalake_metadata_create(sdc_builder, sdc_executor, azure, executor_nam
     files_suffix = 'json'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    adls_metadata = pipeline_builder.add_stage(executor_name, type='executor')
+    adls_metadata = pipeline_builder.add_stage(ADLS_GEN2_FILE_METADATA, type='executor')
     adls_metadata.set_attributes(task='CREATE_EMPTY_FILE',
                                  file_path="${record:value('/filepath')}.empty")
 
     pipeline = create_adls_metadata_pipeline(pipeline_builder,
                                              azure,
-                                             f'ADLS File Metadata Create Task ({executor_name})',
+                                             f'ADLS File Metadata Create Task ({ADLS_GEN2_FILE_METADATA})',
                                              directory_name,
                                              files_prefix,
                                              files_suffix,
