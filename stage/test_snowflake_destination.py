@@ -1486,7 +1486,7 @@ def test_failing_table_el_eval_snowflake(sdc_builder, sdc_executor, snowflake):
 
     The pipeline looks like:
     Snowflake pipeline:
-        dev_raw_data_source  >>  >> snowflake_destination
+        dev_raw_data_source >> snowflake_destination
     """
     table_name_1 = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     table_name_2 = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
@@ -1545,6 +1545,89 @@ def test_failing_table_el_eval_snowflake(sdc_builder, sdc_executor, snowflake):
         snowflake.delete_staged_files(storage_path)
         logger.debug('Dropping Snowflake stage %s ...', stage_name)
         snowflake.drop_entities(stage_name=stage_name)
+
+
+@snowflake
+@sdc_min_version('5.9.0')
+def test_table_el_eval_not_created(sdc_builder, sdc_executor, snowflake):
+    """Test Snowflake destination sends records to error when table EL evaluation doesn't find table
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source >> snowflake_destination
+    """
+    table_name_1 = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    table_name_2 = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    data = [
+        {'TABLE': table_name_1, 'ID': 1, 'NAME': 'Rogelio Federer'},
+        {'TABLE': table_name_2, 'ID': 2, 'NAME': 'Rafa Nadal'},
+        {'TABLE': table_name_1, 'ID': 3, 'NAME': 'Domi Thiem'},
+        {'TABLE': table_name_2, 'ID': 4, 'NAME': 'Juan Del Potro'},
+        {'TABLE': table_name_1, 'ID': 1, 'NAME': 'Roger Federer'},
+        {'TABLE': table_name_2, 'ID': 2, 'NAME': 'Rafael Nadal'},
+        {'TABLE': table_name_1, 'ID': 3, 'NAME': 'Dominic Thiem'},
+        {'TABLE': table_name_2, 'ID': 4, 'NAME': 'Juan Del Potro'}
+    ]
+
+    # we just create one of the tables, so we only get errors for the other records
+    table_1 = snowflake.create_table(table_name_1)
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created entities in Snowflake stage configurations.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Build Dev Raw stage.
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    raw_data = '\n'.join((json.dumps(row) for row in data))
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    # Build Snowflake stage.
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table="${record:value('/TABLE')}",
+                                         row_field='/', column_fields_to_ignore='TABLE',
+                                         table_auto_create=False)
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [snowflake_destination, wiretap.destination]
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # 4 good records and 4 bad records as table_2 never existed
+        assert 8 == len(wiretap.output_records)
+        assert 4 == len(wiretap.error_records)
+
+        result = engine.execute(table_1.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert len(data_from_database) == 4
+
+        for error_record in wiretap.error_records:
+            assert 'SNOWFLAKE_61' == error_record.header['errorCode']
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        logger.debug('Dropping Snowflake stage %s ...', stage_name)
+        snowflake.drop_entities(stage_name=stage_name)
+        table_1.drop(engine)
+        engine.dispose()
 
 
 @snowflake
