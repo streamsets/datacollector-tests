@@ -203,7 +203,7 @@ def test_parquet_nullable_fields(sdc_builder, sdc_executor):
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs.set_attributes(data_format='PARQUET',
                             parquet_schema_location='INFER',
-                            nullable_fields=False,
+                            nullable_fields=True,
                             directory_template=temp_dir)
 
     stage >> local_fs
