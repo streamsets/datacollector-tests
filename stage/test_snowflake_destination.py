@@ -1294,8 +1294,8 @@ def test_snowflake_multitable_volume_multithread(sdc_builder, sdc_executor, snow
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
     try:
-        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_pipeline_batch_count(5)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         result = engine.execute(f'select * from {table_name_1}')
         data_from_database_1 = sorted(result.fetchall(), key=lambda row: row[1])
@@ -1402,8 +1402,8 @@ def test_snowflake_multitable_auto_create_pipe(sdc_builder, sdc_executor, snowfl
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
     try:
-        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_pipeline_batch_count(5)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         def query_function():
             return engine.execute(f'select * from {table_name_1}')
