@@ -543,8 +543,10 @@ def test_username(sdc_builder, sdc_executor, database, credential_store, stage_a
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    if Version(sdc_executor.version) >= Version('5.8.0'):
+    if Version(sdc_executor.version) == Version('5.8.0'):
         assert "JDBC_INIT_01" in error.value.message, f'Expected a JDBC_INIT_01 error, got "{error.value.message}" instead'
+    elif Version(sdc_executor.version) >= Version('5.9.0'):
+        assert "JDBC_INIT_48" in error.value.message, f'Expected a JDBC_INIT_48 error, got "{error.value.message}" instead'
     else:
         assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
 
