@@ -19,6 +19,7 @@ import string
 import tempfile
 
 from streamsets.sdk.exceptions import StartError
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import snowflake, sdc_enterprise_lib_min_version, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -84,14 +85,15 @@ def test_snowflake_executor_basic(sdc_builder, sdc_executor, snowflake, with_el,
             result.close()
             assert data_from_database == [('test', 42)]
         else:
+            error_code = 'QUERY_EXECUTOR_001' if Version(sdc_executor.version) < Version('5.9.0') else 'JDBC_02'
             assert len(wiretap.error_records) == 1, \
-                'This execution mode was expected to produce a single error record with error code QUERY_EXECUTOR_001'
-            assert wiretap.error_records[0].header['errorCode'] == 'QUERY_EXECUTOR_001', \
-                 'This execution mode was expected to produce a single error record with error code QUERY_EXECUTOR_001'
+                f'This execution mode was expected to produce a single error record with error code {error_code}'
+            assert wiretap.error_records[0].header['errorCode'] == error_code, \
+                f'This execution mode was expected to produce a single error record with error code {error_code}'
             assert len(wiretap.output_records) == 1, \
                 'This execution mode was expected to produce a single output (event) record of type "failed-query"'
             assert wiretap.output_records[0].header.values['sdc.event.type'] == 'failed-query', \
-                 'This execution mode was expected to produce a single output (event) record of type "failed-query"'
+                'This execution mode was expected to produce a single output (event) record of type "failed-query"'
     finally:
         if with_table:
             engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
@@ -169,10 +171,11 @@ def test_snowflake_executor_with_file_uploader(sdc_builder, sdc_executor, snowfl
             assert len(wiretap.output_records) == 1
             assert data_from_database == [(row['id'], row['name']) for row in ROWS_IN_DATABASE]
         else:
+            error_code = 'QUERY_EXECUTOR_001' if Version(sdc_executor.version) < Version('5.9.0') else 'JDBC_02'
             assert len(wiretap.error_records) >= 1, \
                 'This execution mode was expected to produce one error record for the executor and others in the pipeline finisher'
-            assert wiretap.error_records[0].header['errorCode'] == 'QUERY_EXECUTOR_001', \
-                'This execution mode was expected to produce error records, the first one with error code QUERY_EXECUTOR_001'
+            assert wiretap.error_records[0].header['errorCode'] == error_code, \
+                f'This execution mode was expected to produce error records, the first one with error code {error_code}'
             assert len(wiretap.output_records) == 1, \
                 'This execution mode was expected to produce a single output (event) record of type "failed-query"'
             assert wiretap.output_records[0].header.values['sdc.event.type'] == 'failed-query', \
