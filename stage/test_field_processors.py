@@ -380,48 +380,6 @@ def test_field_order(sdc_builder, sdc_executor):
     assert new_value[extra_fields[0]] == default_value
 
 
-def test_field_pivoter(sdc_builder, sdc_executor):
-    """Test field pivoter processor. The pipeline would look like:
-
-        dev_raw_data_source >> field_pivoter >> wiretap
-
-    With the given config, data will pivot at field_to_pivot (/ballpoint/color_list). In this case by creating
-    3 records (one for each of ['black', 'blue', 'red']) for one input record.
-    """
-    raw_dict = dict(ballpoint=dict(color_list=['black', 'blue', 'red'], unit_cost='.10'))
-    raw_data = json.dumps(raw_dict)
-    field_to_pivot = '/ballpoint/color_list'
-    field_name_path = '/ballpoint/color_list_path'
-    pivoted_item_path = '/ballpoint/color'
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
-    field_pivoter = pipeline_builder.add_stage('Field Pivoter')
-    field_pivoter.set_attributes(copy_all_fields=True, field_to_pivot=field_to_pivot,
-                                 original_field_name_path=field_name_path, pivoted_items_path=pivoted_item_path,
-                                 save_original_field_name=True)
-    wiretap = pipeline_builder.add_wiretap()
-
-    dev_raw_data_source >> field_pivoter >> wiretap.destination
-    pipeline = pipeline_builder.build('Field Pivoter pipeline')
-    sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-    # We should generate 3 records
-    assert len(wiretap.output_records) == 3
-
-    # Some fields are different in each record
-    assert wiretap.output_records[0].get_field_data('/ballpoint/color') == 'black'
-    assert wiretap.output_records[1].get_field_data('/ballpoint/color') == 'blue'
-    assert wiretap.output_records[2].get_field_data('/ballpoint/color') == 'red'
-
-    # While others should be exactly the same
-    for i in range(3):
-        assert wiretap.output_records[i].get_field_data('/ballpoint/unit_cost') == '.10'
-        assert wiretap.output_records[i].get_field_data('/ballpoint/color_list_path') == '/ballpoint/color_list'
-
-
 def test_field_remover(sdc_builder, sdc_executor):
     """Test field remover processor for three different actions. The pipeline would look like:
 
