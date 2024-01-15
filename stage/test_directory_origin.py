@@ -27,6 +27,7 @@ from uuid import uuid4
 
 import pytest
 
+from streamsets.sdk.exceptions import StartError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -2386,5 +2387,50 @@ def test_directory_origin_with_file_processing_delay(sdc_builder, sdc_executor, 
 
     finally:
         sdc_executor.stop_pipeline(pipeline)
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -fr {tmp_directory}')
+
+
+@sdc_min_version('5.9.0')
+def test_directory_origin_with_max_total_spool_files(sdc_builder, sdc_executor, keep_data):
+    """
+    Test Directory Origin with the File Processing Delay parameter set to 100 seconds.
+    Files should be found only after the delay time has passed from their last modified time,
+    and not before then.
+
+        directory >> wiretap
+
+    """
+
+    raw_data = "Hello World"
+    random_str = get_random_string()
+    tmp_directory = sdc_executor.execute_shell('mktemp -d').stdout.rstrip()
+    sdc_executor.write_file(os.path.join(tmp_directory, "sdc-" + random_str + "-1.txt"), raw_data)
+    sdc_executor.write_file(os.path.join(tmp_directory, "sdc-" + random_str + "-2.txt"), raw_data)
+    sdc_executor.write_file(os.path.join(tmp_directory, "sdc-" + random_str + "-3.txt"), raw_data)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(batch_size_in_recs=1,
+                             data_format='TEXT',
+                             file_name_pattern='sdc*.txt',
+                             file_processing_delay_in_ms=0,
+                             files_directory=tmp_directory,
+                             max_files_hard_limit=2,
+                             read_order='TIMESTAMP')
+    wiretap = pipeline_builder.add_wiretap()
+    directory >> wiretap.destination
+    pipeline = pipeline_builder.build()
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        with pytest.raises(StartError) as exception:
+            sdc_executor.start_pipeline(pipeline)
+
+        expected_error = "SPOOLDIR_50 - Exceeded max number"
+        assert expected_error in f'{exception.value}',\
+            f"Expected '{expected_error}' exception, instead got '{exception.value}'"
+
+    finally:
         if not keep_data:
             sdc_executor.execute_shell(f'rm -fr {tmp_directory}')
