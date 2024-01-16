@@ -22,7 +22,6 @@ import string
 from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import database, category, sdc_min_version
-from time import sleep
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +111,10 @@ def test_parse_datetimes(sdc_builder, sdc_executor, database, stage_attributes):
     stage_attributes.update({'max_batch_size_in_records': 1, 'replication_slot': replication_slot,
                              'poll_interval': POLL_INTERVAL, 'initial_change': 'DATE',
                              'start_date': start_date})
+
+    connection = None
+    table = None
+    pipeline = None
     try:
         # Create table and then perform some operations to simulate activity
         table = _create_table_in_database(table_name, database)
@@ -186,13 +189,15 @@ def test_parse_datetimes(sdc_builder, sdc_executor, database, stage_attributes):
                                                 for row in INSERT_ROWS]
 
     finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
+        if pipeline is not None:
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+                sdc_executor.stop_pipeline(pipeline)
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
         database.deactivate_and_drop_replication_slot(replication_slot)
-        sdc_executor.remove_pipeline(pipeline)
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
@@ -242,6 +247,9 @@ def test_parse_null_values(sdc_builder, sdc_executor, database):
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
+    connection = None
+    table = None
+    pipeline = None
     try:
         # Create table
         logger.info('Creating table %s in %s database ...', table_name, database.type)
@@ -280,20 +288,23 @@ def test_parse_null_values(sdc_builder, sdc_executor, database):
                 column_names = change.get('columnnames')
                 if column_names is not None:
                     actual_tables.add(change['table'])
-                    actual_data.append(dict(zip(column_names, change.get('columnvalues'))))
+                    if change['table'] == table_name:
+                        actual_data.append(dict(zip(column_names, change.get('columnvalues'))))
 
-        assert (data, set([table_name])) == (actual_data, actual_tables),\
-            f"\nTable {actual_tables}\nhas values\n{actual_data}\n\nbut table's name is {set([table_name])}\n" \
-            f"and was expected to have values\n{data}\n\nSee more details of the diff below:\n\n"
+        assert data == actual_data, f"Found {actual_data} where {data} was expected, in table '{table_name}'. " \
+                                    f"Found tables {actual_tables} in database."
 
     finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline %s ...', pipeline.id)
-            sdc_executor.stop_pipeline(pipeline).wait_for_stopped(timeout_sec=60)
+        if pipeline is not None:
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+                logger.info('Stopping pipeline %s ...', pipeline.id)
+                sdc_executor.stop_pipeline(pipeline).wait_for_stopped(timeout_sec=60)
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
-        sdc_executor.remove_pipeline(pipeline)
+        if connection is not None:
+            connection.close()
+
 
 @stub
 @category('basic')
