@@ -1349,6 +1349,7 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
+    connection = None
     table = None
     try:
         sdc_executor.start_pipeline(pipeline)
@@ -1420,7 +1421,8 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
         #database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
