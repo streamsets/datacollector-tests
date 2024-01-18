@@ -2625,20 +2625,20 @@ def test_datadrift_decimal_types(sdc_builder, sdc_executor, snowflake, replicate
         table_def = engine.execute(f'describe table "{table_name}"')
         if replicate_decimal_columns:
             assert table_def.fetchall() == [
-                ('DECIMALFIELD', 'NUMBER(10,2)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD2', 'NUMBER(38,37)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD3', 'NUMBER(30,0)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD4', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD5', 'NUMBER(38,12)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD6', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None)]
+                ('DECIMALFIELD', 'NUMBER(10,2)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD2', 'NUMBER(38,37)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD3', 'NUMBER(30,0)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD4', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD5', 'NUMBER(38,12)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD6', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None)]
         else:
             assert table_def.fetchall() == [
-                ('DECIMALFIELD', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD2', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD3', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD4', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD5', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None),
-                ('DECIMALFIELD6', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None)]
+                ('DECIMALFIELD', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD2', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD3', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD4', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD5', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+                ('DECIMALFIELD6', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None)]
         table_def.close()
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)

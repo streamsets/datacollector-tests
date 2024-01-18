@@ -363,7 +363,7 @@ def test_auto_create_data_types(sdc_builder, sdc_executor, input, converter_type
 
         table_def = engine.execute(f'describe table "{table_name}"')
         assert table_def.fetchall() == [
-            ('VALUE', database_type, 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None)
+            ('VALUE', database_type, 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None)
         ]
     finally:
         if not keep_data:
