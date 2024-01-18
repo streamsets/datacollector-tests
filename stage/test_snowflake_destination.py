@@ -683,6 +683,120 @@ def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, 
 
 
 @snowflake
+@sdc_min_version('5.10.0')
+@pytest.mark.parametrize('primary_key_columns, column_names, upper_case_schema_and_field_names',
+                         [(['ID'], ['ID', 'NAME'], True)])
+@pytest.mark.parametrize('primary_key_location', ['HEADER', 'TABLE'])
+def test_cdc_snowflake_create_primary_key_upper_cased_table(sdc_builder, sdc_executor, snowflake, primary_key_columns,
+                                                            column_names, upper_case_schema_and_field_names,
+                                                            primary_key_location):
+    """Very similar to test_cdc_snowflake_create_primary_key. Table is auto created, and we will also assert
+    that the key columns are created as primary keys. Mixing table name casing. We will be sending 2 batches
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> snowflake_destination
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    CDC_ROWS_IN_DATABASE_MIXED_CASE = [
+        {'OP': 4, column_names[0]: 1, column_names[1]: 'Rogelio Federer'},
+        {'OP': 4, column_names[0]: 2, column_names[1]: 'Rafa Nadal'},
+        {'OP': 4, column_names[0]: 3, column_names[1]: 'Domi Thiem'}
+    ]
+
+    engine = snowflake.engine
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created entities in Snowflake stage configurations.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Build Dev Raw Data Source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    raw_data = ('\n').join((json.dumps(row) for row in CDC_ROWS_IN_DATABASE_MIXED_CASE))
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=False)
+    # Build Expression Evaluator
+    primary_key_header = {}
+    for key in primary_key_columns:
+        primary_key_header[key] = {}
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': "${record:value('/OP')}"},
+        {'attributeToSet': PRIMARY_KEY_SPECIFICATION,
+         'headerAttributeExpression': json.dumps(primary_key_header)}
+    ])
+
+    # Build Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/OP']
+
+    # Build Snowflake
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+
+    snowflake_destination.set_attributes(primary_key_location=primary_key_location,
+                                         table_key_columns=[{
+                                             "keyColumns": primary_key_columns,
+                                             "table": table_name
+                                         }],
+                                         purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name.lower(),
+                                         processing_cdc_data=True,
+                                         table_auto_create=True,
+                                         upper_case_schema_and_field_names=True)
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should see all the records we created as input, without any errors in the output
+        history = sdc_executor.get_pipeline_history(pipeline)
+        input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == input_records
+        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 0
+
+        result = engine.execute(f'SELECT * FROM "{table_name}";')
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])
+        result.close()
+        assert data_from_database == [(row[column_names[0]], row[column_names[1]])
+                                      for row in CDC_ROWS_IN_DATABASE_MIXED_CASE]
+
+        # and we also assert that the pk columns created are PK and NOT NULL
+        result = engine.execute(f'DESC TABLE "{table_name}";')
+        metadata_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        assert len(metadata_from_database) == 2
+        for column in metadata_from_database:
+            name = column[0]
+            nullable = column[3]
+            primary_key = column[5]
+            if name.upper() in map(str.upper, primary_key_columns):
+                assert nullable == 'N'
+                assert primary_key == 'Y'
+            else:
+                assert nullable == 'Y'
+                assert primary_key == 'N'
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        logger.debug('Dropping Snowflake stage %s ...', stage_name)
+        snowflake.drop_entities(stage_name=stage_name)
+        engine.execute(f'drop table {table_name}')
+        engine.dispose()
+
+
+@snowflake
 @pytest.mark.parametrize('primary_key_columns, column_names, upper_case_schema_and_field_names',
                          [(['ID'], ['ID', 'NAME'], True),
                           (['Id'], ['Id', 'Name'], True),
