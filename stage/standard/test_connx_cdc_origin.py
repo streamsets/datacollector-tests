@@ -118,7 +118,7 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
 
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('CONNX CDC')
-        origin.datasync_transform = transform_name
+        origin.datasync_transform_or_group = transform_name
 
         wiretap = builder.add_wiretap()
 
@@ -165,7 +165,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('CONNX CDC')
-    origin.datasync_transform = transform_name
+    origin.datasync_transform_or_group = transform_name
     origin.max_batch_size_in_records = max_batch_size
 
     wiretap = builder.add_wiretap()
@@ -213,7 +213,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('CONNX CDC')
-    origin.datasync_transform = transform_name
+    origin.datasync_transform_or_group = transform_name
 
     finisher = builder.add_stage("Pipeline Finisher Executor")
     finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'connx-finalize-success'}"])
@@ -239,35 +239,40 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx):
         records = wiretap.output_records
         # We can't guarantee that the pipeline stops after doing only one iteration of produce, so we cannot assume that
         # only the 5 events that we expect have been generated.
-        assert len(records) == 5
+        assert len(records) == 6
 
         # First event is always a CRC savepoint
         assert records[0].header.values['sdc.event.type'] == 'connx-savepoint-success'
         assert 'timestamp' in records[0].field
         assert 'query' in records[0].field
 
-        # Second event is the SELECT from the INSERTS table
-        assert records[1].header.values['sdc.event.type'] == 'connx-insert-success'
-        assert records[1].field['rows'] == 100
+        # Second event is also a CRC savepoint
+        assert records[1].header.values['sdc.event.type'] == 'connx-savepoint-success'
         assert 'timestamp' in records[1].field
         assert 'query' in records[1].field
 
-        # Third event is the SELECT from the UPDATES table
-        assert records[2].header.values['sdc.event.type'] == 'connx-update-success'
-        assert records[2].field['rows'] == 0
+        # Third event is the SELECT from the INSERTS table
+        assert records[2].header.values['sdc.event.type'] == 'connx-insert-success'
+        assert records[2].field['rows'] == 100
         assert 'timestamp' in records[2].field
         assert 'query' in records[2].field
 
-        # Second event is the SELECT from the DELETES table
-        assert records[3].header.values['sdc.event.type'] == 'connx-delete-success'
+        # Fourth event is the SELECT from the UPDATES table
+        assert records[3].header.values['sdc.event.type'] == 'connx-update-success'
         assert records[3].field['rows'] == 0
         assert 'timestamp' in records[3].field
         assert 'query' in records[3].field
 
-        # Final event is always a CRC finalize
-        assert records[4].header.values['sdc.event.type'] == 'connx-finalize-success'
+        # Fifth event is the SELECT from the DELETES table
+        assert records[4].header.values['sdc.event.type'] == 'connx-delete-success'
+        assert records[4].field['rows'] == 0
         assert 'timestamp' in records[4].field
         assert 'query' in records[4].field
+
+        # Final event is always a CRC finalize
+        assert records[5].header.values['sdc.event.type'] == 'connx-finalize-success'
+        assert 'timestamp' in records[5].field
+        assert 'query' in records[5].field
     finally:
         tear_down_CDC(cursor, table_name, table_id)
 
