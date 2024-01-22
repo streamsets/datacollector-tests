@@ -793,7 +793,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
 
         if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
             # In MySQL and MariaDB the database and the schema are the same, we should not indicate 2 different values
-            tee.jdbc_connection_string = tee.jdbc_connection_string.replace('/default', '')
+            tee.jdbc_connection_string = tee.jdbc_connection_string.rpartition("/")[0]
 
     # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
     if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
