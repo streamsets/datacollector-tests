@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(autouse=True)
-def storage_type_check(azure, executor_name):
-    if executor_name == ADLS_GEN2_FILE_METADATA and azure.storage_type != STORAGE_V2:
+def storage_type_check(azure):
+    if azure.storage_type != STORAGE_V2:
         pytest.skip('ADLS Gen2 tests require storage type to be of Gen2.')
 
 
@@ -336,7 +336,7 @@ def test_datalake_metadata_change_permission_unix(sdc_builder, sdc_executor, azu
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-def test_datalake_metadata_create(sdc_builder, sdc_executor, azure, executor_name):
+def test_datalake_metadata_create(sdc_builder, sdc_executor, azure):
     """ADLS File Metadata with Create File Task
     The data is written to an ADLS file but removed by ADLS File Metadata executor.
     """
