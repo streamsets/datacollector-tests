@@ -22,6 +22,8 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+from ..utils.utils_azure import AZURE_OBJECT_NAMES
+
 logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.category('standard'), azure('datalake'), sdc_min_version('5.5.0')]
@@ -40,19 +42,6 @@ def storage_type_check(azure):
 
 def test_data_types(sdc_builder, sdc_executor):
     pytest.skip("Blob Storage stores objects without doing data type distinctions.")
-
-
-# Reference:
-# https://learn.microsoft.com/en-us/rest/api/storageservices/naming-and-referencing-shares--directories--files--and-metadata
-AZURE_OBJECT_NAMES = [
-    ('max_size', get_random_string(string.ascii_lowercase, 255)),
-    ('min_size', get_random_string(string.ascii_lowercase, 1)),
-    ('lowercase', get_random_string(string.ascii_lowercase, 20)),
-    ('uppercase', get_random_string(string.ascii_uppercase, 20)),
-    ('mixedcase', get_random_string(string.ascii_letters, 20) + get_random_string(string.ascii_letters, 20)),
-    ('numbers', get_random_string(string.ascii_letters, 5) + "1234567890" + get_random_string(string.ascii_letters, 5)),
-    ('special', get_random_string(string.ascii_letters, 5) + "!@·#$%&()='¡¿[]`^+{}´¨,;-_" + get_random_string(string.ascii_letters, 5))
-]
 
 
 def test_container_names(sdc_builder, sdc_executor):
