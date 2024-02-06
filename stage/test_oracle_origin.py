@@ -88,11 +88,14 @@ def test_oracle_consumer_read_empty_table(sdc_builder, sdc_executor, database, c
         with pytest.raises((RunError, RunningError)) as exception:
             sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['FINISHED'], timeout_sec=30)
 
-        if Version(sdc_executor.version) >= Version('5.8.0'):
-            assert 'ORACLE_01' in f'{exception.value.message}', f'Expected a ORACLE_01 error, got "{exception.value.message}" instead'
-        else:
-            assert 'ORACLE_02' in f'{exception.value.message}', f'Expected a ORACLE_02 error, got "{exception.value.message}" instead'
+        expected_error_code = 'ORACLE_02'
+        if Version(sdc_executor.version) >= Version('5.10.0'):
+            expected_error_code = 'ORACLE_15'
+        elif Version(sdc_executor.version) >= Version('5.8.0'):
+            expected_error_code = 'ORACLE_01'
 
+        assert expected_error_code in f'{exception.value.message}',\
+            f'Expected a {expected_error_code} error, got "{exception.value.message}" instead'
     finally:
         logger.info(f'Dropping table {table_name} in Oracle...')
         table.drop(database.engine)
