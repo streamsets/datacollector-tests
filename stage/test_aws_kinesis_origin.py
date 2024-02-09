@@ -418,6 +418,154 @@ def test_kinesis_consumer_assume_role_with_external_id(sdc_builder, sdc_executor
         aws.dynamodb.delete_table(TableName=application_name)
 
 
+@aws('kinesis')
+@sdc_min_version('5.10.0')
+def test_kinesis_consumer_other_region_and_vpc_endpoint(sdc_builder, sdc_executor, aws):
+    """Test for Kinesis consumer origin stage using other as region and VPC endpoint. VPC endpoint allows the customer
+    to privately connect to supported AWS services and VPC endpoint services. We do this by publishing data to
+    a test stream using Kinesis client and having a pipeline which reads that data using Kinesis consumer origin stage.
+
+    The region is set to "OTHER", and the service vpc endpoint service is used for kinesis. VPC endpoint only
+    works with Kinesis, not with DynamoDB or CloudWatch. We need to enable use different connection for DynamoDB and
+    CloudWatch and specify a new region for each one.
+    Data is then asserted for what is published at Kinesis client and what we read in the pipeline.
+    The pipeline looks like:
+
+    Kinesis Consumer pipeline:
+        kinesis_consumer >> wiretap
+    """
+
+    if not aws.kinesis_vpc_endpoint:
+        pytest.skip("This test will only run with --aws-kinesis-vpc-endpoint")
+
+    vpc_endpoint = aws.kinesis_vpc_endpoint
+
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name,
+                                    data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name)
+
+    wiretap = builder.add_wiretap()
+    kinesis_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    kinesis_consumer.set_attributes(region='OTHER',
+                                    endpoint=vpc_endpoint,
+                                    use_different_connection_for_dynamodb=True,
+                                    use_different_connection_for_cloudwatch=True)
+
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        output_records = [record.field['text'].value
+                          for record in wiretap.output_records]
+
+        assert set(output_records) == expected_messages
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+
+@aws('kinesis')
+@sdc_min_version('5.10.0')
+def test_kinesis_consumer_using_specific_connection_for_dynamodb_and_cloudwatch(sdc_builder, sdc_executor, aws):
+    """Test for Kinesis consumer origin stage using other as region and VPC endpoint. VPC endpoint enables customer
+        to privately connect to supported AWS services and VPC endpoint services. We do so by publishing data to
+        a test stream using Kinesis client and having a pipeline which reads that data using Kinesis consumer origin stage.
+
+    The region is set to "OTHER", and the service vpc endpoint service is used for kinesis. VPC endpoint only
+    works with Kinesis, not with DynamoDB or CloudWatch. We need to enable use different connection for DynamoDB and
+    CloudWatch and specify a new region set to "OTHER" and adding the corresponding endpoint.
+    Data is then asserted for what is published at Kinesis client and what we read in the pipeline.
+
+    The pipeline looks like:
+
+        Kinesis Consumer pipeline:
+            kinesis_consumer >> wiretap
+    """
+
+    if not aws.kinesis_vpc_endpoint:
+        pytest.skip("This test will only run with --aws-kinesis-vpc-endpoint")
+
+    vpc_endpoint = aws.kinesis_vpc_endpoint
+    endpoint = SERVICE_ENDPOINT_FORMAT.format('kinesis', aws.region)
+
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name,
+                                    data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name)
+
+    wiretap = builder.add_wiretap()
+    kinesis_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    kinesis_consumer.set_attributes(region='OTHER',
+                                    endpoint=vpc_endpoint,
+                                    use_different_connection_for_dynamodb=True,
+                                    dynamodb_region='OTHER',
+                                    dynamodb_endpoint=endpoint,
+                                    use_different_connection_for_cloudwatch=True,
+                                    cloudwatch_region='OTHER',
+                                    cloudwatch_endpoint=endpoint)
+
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        output_records = [record.field['text'].value
+                          for record in wiretap.output_records]
+
+        assert set(output_records) == expected_messages
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+
 def _ensure_pipeline_is_stopped(sdc_executor, pipeline):
     if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
         sdc_executor.stop_pipeline(pipeline)
