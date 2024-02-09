@@ -729,7 +729,7 @@ def _test_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, cli
     sdc_executor.add_pipeline(executor_pipeline)
 
     try:
-        sdc_executor.start_pipeline(executor_pipeline)
+        sdc_executor.start_pipeline(executor_pipeline).wait_for_finished()
 
         logger.info("Checking for 'file not present' error code in executor stage's error records")
         assert 'REMOTE_LOCATION_EXECUTOR_02' in [record.header['errorCode']
