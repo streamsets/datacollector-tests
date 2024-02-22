@@ -634,6 +634,81 @@ def test_cdc_Snowflake(sdc_builder, sdc_executor, snowflake, pk):
 
 
 @snowflake
+@sdc_min_version('5.10.0')
+def test_cdc_Snowflake_parquet(sdc_builder, sdc_executor, snowflake):
+    """Similar to test above, but using parquet.
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> snowflake_destination
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Create a table and stage in Snowflake.
+    table = snowflake.create_table(table_name.lower())
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created entities in Snowflake stage configurations.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Build Dev Raw Data Source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    raw_data = ('\n').join((json.dumps(row) for row in CDC_ROWS_IN_DATABASE))
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    # Build Expression Evaluator
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': "${record:value('/OP')}"}])
+
+    # Build Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/OP']
+
+    # Build Snowflake
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         staging_file_format='PARQUET',
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         processing_cdc_data=True,
+                                         primary_key_location="TABLE",
+                                         table_key_columns=[{
+                                             "keyColumns": [
+                                                 "ID"
+                                             ],
+                                             "table": table_name
+                                         }])
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=300)
+        result = engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        result.close()
+        assert data_from_database == [(row['NAME'], row['ID']) for row in CDC_ROWS_IN_DATABASE]
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        logger.debug('Dropping Snowflake stage %s ...', stage_name)
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()
+
+
+@snowflake
 @pytest.mark.parametrize('primary_key_columns, column_names, upper_case_schema_and_field_names',
                          [(['ID'], ['ID', 'NAME'], True),
                           (['Id'], ['Id', 'Name'], True),
