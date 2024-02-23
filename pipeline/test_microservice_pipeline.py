@@ -197,6 +197,46 @@ def test_rest_service_with_gateway_and_query_string(sdc_builder, sdc_executor):
         sdc_executor.stop_pipeline(pipeline)
 
 
+@sdc_min_version('5.10.0')
+def test_rest_service_to_error(sdc_builder, sdc_executor):
+    """Test rest service origin generates error records when the payload fails to parse.
+
+        rest_service_source >> wiretap
+    """
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    rest_service_source = builder.add_stage('REST Service')
+    rest_service_source.http_listening_port = HTTP_LISTENING_PORT
+    rest_service_source.on_record_error = 'TO_ERROR'
+
+    wiretap = builder.add_wiretap()
+
+    rest_service_source >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline)
+
+    rest_service_url = f'http://{sdc_executor.server_host}:{HTTP_LISTENING_PORT}'
+    # build a malformed JSON string with 2 records. The string has an extra closing brace '}' on the second record.
+    data = '{"username":"abc","password":"xyz"}{"username":"def","password":"ijk"}}'
+    headers = {'Content-type': 'application/json'}
+    response = requests.get(rest_service_url, headers=headers, data=data)
+    assert response.status_code == 200, (f'Failed to GET rest service {rest_service_url}. '
+                                         f'Status code: {response.status_code}')
+
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
+    sdc_executor.stop_pipeline(pipeline)
+
+    output_records = wiretap.output_records
+    error_records = wiretap.error_records
+    assert len(output_records) == 1, "Wrong number of output records"
+    assert len(error_records) == 1, "Wrong number of error records"
+    assert error_records[0].header['errorCode'] == "HTTP_SERVER_PUSH_01", (f'Wrong error code. '
+          f'Expected: HTTP_SERVER_PUSH_01, Actual: {error_records[0].header["errorCode"]}')
+
+
 def _create_microservice_pipeline(sdc_builder):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     rest_service_source = pipeline_builder.add_stage('REST Service')
