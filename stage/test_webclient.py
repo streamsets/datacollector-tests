@@ -14,17 +14,14 @@
 import pytest
 from streamsets.testframework.markers import sdc_min_version
 
-from stage.utils.webclient import deps, free_port, server, Endpoint
+from stage.utils.webclient import deps, free_port, server, Endpoint, LIBRARY, RELEASE_VERSION, WEB_CLIENT
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 
 import logging
 import requests
 
-RELEASE_VERSION = "5.10.0"
-WEB_CLIENT = "Web Client"
 DEFAULT_TIMEOUT_IN_SEC = 30
-LIBRARY = "streamsets-datacollector-webclient-impl-okhttp-lib"
 
 logger = logging.getLogger(__name__)
 pytestmark = [sdc_min_version(RELEASE_VERSION)]
@@ -48,7 +45,7 @@ def test_hello_world(sdc_builder, sdc_executor, cleanup, server, test_name):
 
     webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=url,
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -111,7 +108,7 @@ def test_webclient_origin_response_data_format(sdc_builder, sdc_executor, cleanu
 
     webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=url,
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -166,7 +163,7 @@ def test_pagination_page(sdc_builder, sdc_executor, cleanup, server, test_name, 
 
     webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=url,
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -226,7 +223,7 @@ def test_pagination_offset(sdc_builder, sdc_executor, cleanup, server, test_name
     logger.error(url)
     logger.error(requests.get(url.replace("${startAt}", "0")).text)
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=url,
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -316,7 +313,7 @@ def test_linked_pagination(
 
     webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=f"{server.url}/link_1",
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -346,10 +343,101 @@ def test_linked_pagination(
     handler.wait_for_metric(work, "input_record_count", expected, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
 
     records = [{k: v for k, v in record.field.items()} for record in wiretap.output_records]
-    for record in records:
-        logger.error(record)
-    for record in expected_records:
-        logger.error(record)
+    assert len(records) == len(expected_records)
+    assert all([er in records for er in expected_records])
+
+
+@pytest.mark.parametrize(
+    "method, body, content_type, expression",
+    [
+        ["Get", None, None, None],
+        ["Post", '{"hello": "there"}', "application/json", None],
+        ["Put", '{"hello": "there"}', "application/json", None],
+        ["Delete", None, None, None],
+        ["Expression", '{"hello": "there"}', "application/json", "POST"],
+    ],
+)
+def test_http_methods(sdc_builder, sdc_executor, cleanup, server, test_name, method, body, content_type, expression):
+
+    from flask import json, request
+
+    default_response = {"general": "kenobi"}
+    expected_request_body = json.loads(body) if body is not None else None
+    dumped_response = json.dumps(default_response)
+
+    def get():
+        return dumped_response
+
+    def post():
+        request_body = {}
+        try:
+            request_body = json.loads(request.json)
+        except:
+            return None, 400
+        if request_body == expected_request_body:
+            return dumped_response
+        else:
+            return None, 404
+
+    def put():
+        return post()
+
+    def delete():
+        return get()
+
+    def exp():
+        return post()
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    endpoints = {
+        "Get": Endpoint(get, ["GET"], "get"),
+        "Post": Endpoint(post, ["POST"], "post"),
+        "Put": Endpoint(put, ["PUT"], "put"),
+        "Delete": Endpoint(delete, ["DELETE"], "delete"),
+        "Expression": Endpoint(exp, ["POST"], "exp"),
+    }
+    endpoint = endpoints[method]
+
+    expected_records = [default_response]
+
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=f"{server.url}/{endpoint.path}",
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10000,
+        ingestion_mode="Batch",
+        wait_time_between_requests_in_ms=10000,
+        method=method,
+    )
+    if body is not None:
+        webclient_origin.set_attributes(request_body=json.dumps(body))
+    if expression is not None:
+        webclient_origin.set_attributes(method_expression=expression)
+    if content_type is not None:
+        # We don't need to set the header as JSON is set by default,
+        # but let's make it explicit to make changing this test easier.
+        webclient_origin.set_attributes(
+            common_headers=[{"commonHeaderName": "Content-Type", "commonHeaderValue": "application/json"}]
+        )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+    records = [{k: v for k, v in record.field.items()} for record in wiretap.output_records]
     assert len(records) == len(expected_records)
     assert all([er in records for er in expected_records])
 

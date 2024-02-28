@@ -24,6 +24,8 @@ from time import sleep
 from typing import Callable, Sequence
 
 RELEASE_VERSION = "5.10.0"
+WEB_CLIENT = "Web Client"
+LIBRARY = "streamsets-datacollector-webclient-impl-okhttp-lib"
 logger = logging.getLogger(__name__)
 
 
@@ -142,8 +144,7 @@ class Server:
         app = Flask(self.id)
 
         for endpoint in endpoints:
-            app.add_url_rule(f"/{endpoint.path}", endpoint.path, endpoint.func)
-            # url = f"{self.__proto__}://{self.__addr__}:{self.__port__}/{endpoint.path}"
+            app.add_url_rule(f"/{endpoint.path}", endpoint.path, endpoint.func, methods=endpoint.methods)
             url = f"{self.__proto__}://{self.__hostname__}.cluster:{self.__port__}/{endpoint.path}"
             endpoint.send_url(url)
 
