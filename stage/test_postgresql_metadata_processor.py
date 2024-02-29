@@ -361,6 +361,38 @@ def test_retrieve_primary_key_constraints_from_the_records(
                 logger.info(f'The files directory could not be deleted')
 
 
+@database('postgresql')
+def test_empty_table_name(sdc_builder, sdc_executor, database, keep_data):
+    """Ensure proper error when table name parameter evaluates to a invalid name"""
+
+    table_name = "${record:value('/nonExistingField')}"
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = '{"id":1, "code": 2}'
+
+    processor = builder.add_stage('PostgreSQL Metadata')
+    processor.table_name = table_name
+
+    wiretap = builder.add_wiretap()
+
+    source >> processor >> wiretap.destination
+
+    # Create & run the pipeline
+    pipeline = builder.build().configure_for_environment(database)
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # The record should be sent to error with proper error code
+    errors = wiretap.error_records
+    assert len(errors) == 1
+    error_code = errors[0].header['errorCode']
+    assert error_code == 'JDBC_120', f'Expected a JDBC_120 error, got {error_code} instead'
+
+
 def _generate_dummy_records(num_records=2):
     return [{
                 'id': i,
