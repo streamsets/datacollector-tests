@@ -841,6 +841,60 @@ def test_default_value(sdc_builder, sdc_executor, database, credential_store):
 
 
 @database
+@pytest.mark.parametrize('data_type', ['STRING', 'INTEGER'])
+def test_empty_default_value(sdc_builder, sdc_executor, database, credential_store, data_type):
+    """
+    Check that 'Missing Values Behavior' applies when default value for a column mapping is empty and DB returns
+    no rows.
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_and_populate_lookup_table(table_name, database)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
+        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    else:
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = -1'
+    column_mappings = [dict(defaultValue='',
+                            dataType=data_type,
+                            columnName="name",
+                            field='/FirstName')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               missing_values_behavior='PASS_RECORD_ON',
+                               column_mappings=column_mappings)
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup Default Value').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_records = wiretap.output_records
+        assert len(output_records) == len(raw_data) - 1, 'Wrong numbers of records'
+        for out_record in output_records:
+            if data_type == 'STRING':  # empty string is a valid value for STRING data type
+                assert out_record.field["FirstName"] == '', 'Wrong record. Default value should be empty string!'
+            else:  # empty string is NOT a valid value for the other data types
+                assert "FirstName" not in out_record.field, 'Wrong record. Field "FirstName" should not be present!'
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
 def test_retry_on_cache_miss(sdc_builder, sdc_executor, database, credential_store):
     """
     The pipeline looks like:
