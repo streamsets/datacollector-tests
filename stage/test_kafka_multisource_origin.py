@@ -495,7 +495,6 @@ def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(pipeline)
 
 
-
 # SDC-16127: KafkaMultiConsumer: Does not handle messages with null payload
 @cluster('cdh', 'kafka')
 def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
@@ -532,8 +531,13 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
         assert len(output_records) == 1
         # Check that the null record did generate an error record
         assert 1 == len(wiretap.error_records)
-        error_message = wiretap.error_records[0].header['errorMessage']
-        assert expected_error_message == error_message
+
+        error_record = wiretap.error_records[0]
+        assert expected_error_message == error_record.header['errorMessage']
+        assert kafka_multitopic_consumer.topic_list[0] == error_record.header.values['topic']
+        assert '1' == error_record.header.values['offset']
+        assert '0' == error_record.header.values['partition']
+        assert 'abc' in str(error_record)  # 'abc' is the key set in the message, making it as messageKey
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
