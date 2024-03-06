@@ -169,7 +169,7 @@ def test_data_types_oracle(sdc_builder, sdc_executor, input, converter_type, dat
 
     target = builder.add_stage('Oracle (Preview)')
     target.table_name = table_name
-    target.enclose_object_names = True
+    target.upper_case_names = False
     target.field_to_column_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
@@ -235,7 +235,7 @@ def test_object_names_oracle(sdc_builder, sdc_executor, database, test_name, tab
 
     target = builder.add_stage('Oracle (Preview)')
     target.table_name = table_name
-    target.enclose_object_names = True
+    target.upper_case_names = False
     target.field_to_column_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
@@ -287,7 +287,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
 
     target = builder.add_stage('Oracle (Preview)')
     target.table_name = table_name
-    target.enclose_object_names = True
+    target.upper_case_names = False
     target.field_to_column_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
