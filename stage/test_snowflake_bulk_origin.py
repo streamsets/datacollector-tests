@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import math
 import pytest
 import logging
 import string
 
-from streamsets.sdk.exceptions import StartError
+from streamsets.sdk.exceptions import StartError, StartingError
 from streamsets.sdk.utils import get_random_string, Version
 from streamsets.testframework.markers import snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -902,3 +903,132 @@ def test_mix_tables_and_views(sdc_builder, sdc_executor, snowflake):
         drop_table(engine, table1_name)
         drop_table(engine, table2_name)
         engine.dispose()
+
+
+@sdc_min_version('5.10.0')
+@pytest.mark.parametrize('wrong_object', ["Warehouse", "Database", "Schema"])
+def test_wrong_warehouse_database_schema(sdc_builder, sdc_executor, snowflake, wrong_object):
+    """
+    Tests that the Snowflake Bulk Origin shows expected errors when a wrong warehouse, database or schema is filled.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location="INTERNAL")
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location="INTERNAL",
+                                    snowflake_stage_name=stage_name,
+                                    **{get_table_config_arg_name(sdc_builder.version):
+                                        [{'inclusionPattern': table_name}]})
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    if wrong_object == 'Warehouse':
+        snowflake_origin.warehouse = "WRONG_OBJ"
+    elif wrong_object == 'Database':
+        snowflake_origin.database = "WRONG_OBJ"
+    else:
+        snowflake_origin.schema = "WRONG_OBJ"
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        create_table_and_insert_values(engine, table_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+    except (StartError, StartingError) as e:
+        assert 'SNOWFLAKE_16' in e.message
+        assert wrong_object.lower() in e.message
+    else:
+        pytest.fail('Expected SNOWFLAKE_016 error during start of the pipeline.')
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
+@sdc_min_version('5.10.0')
+@pytest.mark.parametrize('private_key_location', ['KEYPAIR', 'KEYPAIR_CONTENT'])
+def test_key_pair_authentication(sdc_builder, sdc_executor, snowflake, private_key_location):
+    """
+    Tests that the Snowflake Bulk Origin can be used with Snowflake Key-Pair authentication works as expected.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location="INTERNAL")
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location="INTERNAL",
+                                    snowflake_stage_name=stage_name,
+                                    **{get_table_config_arg_name(sdc_builder.version):
+                                        [{'inclusionPattern': table_name}]},
+                                    private_key_path=snowflake.private_key_file_path,
+                                    private_key_content=snowflake.private_key_file_contents,
+                                    private_key_password=snowflake.private_key_passphrase)
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    snowflake = set_sdc_stage_config(snowflake,
+                                     'config.snowflake.snowflakeConnection.snowflakeAuthenticationMethod',
+                                     private_key_location)
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        column_names = create_table_and_insert_values(engine, table_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        expected_records = DEFAULT_RECORDS
+
+        # Check that the number of records is equal to what we expect
+        assert len(records) == len(expected_records), \
+            f'{len(expected_records)} records should have been processed but only {len(records)} were found'
+
+        for record, expected_record in zip(records, expected_records):
+            assert record.header.values[DATABASE_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_DATABASE
+            assert record.header.values[SCHEMA_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_SCHEMA
+            assert record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME] == table_name
+
+            for i in range(0, len(column_names)):
+                # Check that each row has the needed columns ...
+                assert column_names[i] in record.field, f'The record should have a column named {column_names[i]}'
+                # ... and that the value contained is what we expect
+                assert expected_record[i] == record.field[column_names[i]], \
+                    f'The value of the field {column_names[i]} should have been {expected_record[i]},' \
+                    f' but it is {record.field[column_names[i]]}'
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
+def set_sdc_stage_config(snowflake, config, value):
+    # There is this stf issue that sets up 2 configs are named the same, both configs are set up
+    # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
+    # This acts as a workaround to only set that specific config
+    custom_snowflake = copy.deepcopy(snowflake)
+    custom_snowflake.sdc_stage_configurations[BULK_STAGE_NAME][config] = value
+    return custom_snowflake

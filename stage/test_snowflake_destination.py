@@ -24,7 +24,7 @@ import pytest
 import sqlalchemy
 from operator import itemgetter
 from sqlalchemy.sql import text
-from streamsets.sdk.exceptions import StartError
+from streamsets.sdk.exceptions import StartError, StartingError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, snowflake, sdc_enterprise_lib_min_version, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -239,6 +239,69 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
         data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
         result.close()
         assert data_from_database == [(row['name'], row['id']) for row in ROWS_IN_DATABASE]
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()
+
+
+@snowflake
+@sdc_min_version('5.10.0')
+@pytest.mark.parametrize('wrong_object', ["Warehouse", "Database", "Schema"])
+def test_wrong_warehouse_database_schema(sdc_builder, sdc_executor, snowflake, wrong_object):
+    """ Tests that the Snowflake Destination shows expected errors when a wrong warehouse, database or schema is filled.
+
+        The pipeline looks like:
+        Snowflake pipeline:
+            dev_raw_data_source  >> snowflake_destination
+    """
+    stage_location = 'INTERNAL'
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Create a table and stage in Snowflake.
+    table = snowflake.create_table(table_name.lower())
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    raw_data = '\n'.join(json.dumps(row) for row in ROWS_IN_DATABASE)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(stage_location=stage_location,
+                                         purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name)
+
+    dev_raw_data_source >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    if wrong_object == 'Warehouse':
+        snowflake_destination.warehouse = "WRONG_OBJ"
+    elif wrong_object == 'Database':
+        snowflake_destination.database = "WRONG_OBJ"
+    else:
+        snowflake_destination.schema = "WRONG_OBJ"
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+    except (StartError, StartingError) as e:
+        assert 'SNOWFLAKE_16' in e.message
+        assert wrong_object.lower() in e.message
+    else:
+        pytest.fail('Expected SNOWFLAKE_016 error during start of the pipeline.')
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
         snowflake.delete_staged_files(storage_path)
@@ -3044,9 +3107,12 @@ def test_snowflake_use_custom_role(sdc_builder, sdc_executor, snowflake, role):
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name='~',
-                                         table=table_name,
-                                         use_snowflake_role=True,
-                                         snowflake_role_name=role)
+                                         table=table_name)
+
+    if Version(sdc_builder.version) < Version("5.10.0"):
+        snowflake_destination.set_attributes(use_snowflake_role=True, snowflake_role_name=role)
+    else:
+        snowflake_destination.set_attributes(role=role)
 
     if Version(sdc_builder.version) < Version("5.7.0"):
         snowflake_destination.set_attributes(local_file_prefix=file_prefix)
