@@ -25,6 +25,11 @@ from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
+KAFKA_LIBRARIES_THAT_DONT_SUPPORT_HEADERS = ['streamsets-datacollector-apache-kafka_0_9-lib',
+                                             'streamsets-datacollector-apache-kafka_0_8-lib',
+                                             'streamsets-datacollector-cdh_kafka_2_1-lib',
+                                             'streamsets-datacollector-apache-kafka_0_10-lib']
+
 
 @pytest.fixture(autouse=True)
 def kafka_check(cluster):
@@ -80,10 +85,7 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
     """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
     which timestamp >= Auto Offset Reset Timestamp configuration value.
     """
-    if any(stage_lib in cluster.sdc_stage_libs for stage_lib in ['streamsets-datacollector-apache-kafka_0_9-lib',
-                                                                 'streamsets-datacollector-apache-kafka_0_8-lib',
-                                                                 'streamsets-datacollector-cdh_kafka_2_1-lib',
-                                                                 'streamsets-datacollector-apache-kafka_0_10-lib']):
+    if any(stage_lib in cluster.sdc_stage_libs for stage_lib in KAFKA_LIBRARIES_THAT_DONT_SUPPORT_HEADERS):
         pytest.skip('Test only designed to run on Kafka version >= 0.10.1')
 
     INPUT_DATA = [f'message{i}' for i in range(5)]
@@ -507,6 +509,8 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
     message = json.dumps({'abc': '123'})
     expected_error_message = 'KAFKA_74 - Tombstone message: payload is null'
 
+    contains_header = cluster.sdc_stage_libs not in KAFKA_LIBRARIES_THAT_DONT_SUPPORT_HEADERS
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
     kafka_multitopic_consumer.set_attributes(data_format='JSON')
@@ -534,10 +538,12 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
 
         error_record = wiretap.error_records[0]
         assert expected_error_message == error_record.header['errorMessage']
-        assert kafka_multitopic_consumer.topic_list[0] == error_record.header.values['topic']
-        assert '1' == error_record.header.values['offset']
-        assert '0' == error_record.header.values['partition']
         assert 'abc' in str(error_record)  # 'abc' is the key set in the message, making it as messageKey
+
+        if contains_header:
+            assert kafka_multitopic_consumer.topic_list[0] == error_record.header.values['topic']
+            assert '1' == error_record.header.values['offset']
+            assert '0' == error_record.header.values['partition']
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
