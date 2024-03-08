@@ -172,7 +172,6 @@ def _create_oracle_destination_pipeline(pipeline_builder, pipeline_title, raw_da
     return pipeline_builder.build(title=pipeline_title)
 
 
-@database
 def test_oracle_destination_delete(sdc_builder, sdc_executor, database):
     """Simple Oracle Destination test with DELETE operation.
     The pipeline deletes records from the database and verifies that correct data is in the database.
