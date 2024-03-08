@@ -458,8 +458,8 @@ def test_kinesis_consumer_other_region_and_vpc_endpoint(sdc_builder, sdc_executo
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
     kinesis_consumer.set_attributes(region='OTHER',
                                     endpoint=vpc_endpoint,
-                                    use_different_connection_for_dynamodb=True,
-                                    use_different_connection_for_cloudwatch=True)
+                                    use_a_different_connection_for_dynamodb=True,
+                                    use_a_different_connection_for_cloudwatch=True)
 
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
@@ -531,10 +531,10 @@ def test_kinesis_consumer_using_specific_connection_for_dynamodb_and_cloudwatch(
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
     kinesis_consumer.set_attributes(region='OTHER',
                                     endpoint=vpc_endpoint,
-                                    use_different_connection_for_dynamodb=True,
+                                    use_a_different_connection_for_dynamodb=True,
                                     dynamodb_region='OTHER',
                                     dynamodb_endpoint=endpoint,
-                                    use_different_connection_for_cloudwatch=True,
+                                    use_a_different_connection_for_cloudwatch=True,
                                     cloudwatch_region='OTHER',
                                     cloudwatch_endpoint=endpoint)
 
