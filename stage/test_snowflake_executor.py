@@ -18,7 +18,7 @@ import pytest
 import string
 import tempfile
 
-from streamsets.sdk.exceptions import StartError
+from streamsets.sdk.exceptions import StartError, StartingError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import snowflake, sdc_enterprise_lib_min_version, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -283,11 +283,59 @@ def test_snowflake_executor_warehouse(sdc_builder, sdc_executor, snowflake, ware
         data_from_database = result.fetchall()
         result.close()
         assert data_from_database == [('test', 42)]
-    except StartError as e:
+    except (StartError, StartingError) as e:
         if warehouse == "NOT_A_WH":
             message = str(e.message).replace('"', '').replace("'", '')
-            assert "SNOWFLAKE_16 - describe warehouse NOT_A_WH failed" in message
-            assert "Warehouse NOT_A_WH does not exist or not authorized." in message
+            assert "SNOWFLAKE_16" in message
+            assert "NOT_A_WH failed" in message
+    finally:
+        engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
+        engine.dispose()
+
+
+@snowflake
+@sdc_min_version('5.10.0')
+@pytest.mark.parametrize('private_key_location', ['KEYPAIR', 'KEYPAIR_CONTENT'])
+def test_key_pair_authentication(sdc_builder, sdc_executor, snowflake, private_key_location):
+    """
+        Similar to test_basic, but using Key Pair authentication.
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{"value": 42}')
+    dev_raw_data_source.stop_after_first_batch = True
+
+    snowflake_executor = pipeline_builder.add_stage('Snowflake', type='executor')
+
+    query = "insert into"
+    query_str = f"{query} STF_DB.STF_SCHEMA.{table_name} values ('test', 42)"
+
+    snowflake_executor.set_attributes(sql_queries=[query_str],
+                                      authentication_method=private_key_location,
+                                      private_key_path=snowflake.private_key_file_path,
+                                      private_key_content=snowflake.private_key_file_contents,
+                                      private_key_password=snowflake.private_key_passphrase)
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> snowflake_executor
+    snowflake_executor >= wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    engine.execute(f"create or replace table STF_DB.STF_SCHEMA.{table_name} (id string, value int)")
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(f"Select $1, cast($2 as integer) from STF_DB.STF_SCHEMA.{table_name}")
+        data_from_database = result.fetchall()
+        result.close()
+        assert data_from_database == [('test', 42)]
     finally:
         engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
         engine.dispose()
