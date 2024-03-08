@@ -440,7 +440,7 @@ def test_invalid_configs_diff_bucket_same_prefix(sdc_builder, sdc_executor, aws)
     except Exception as error:
         assert error.issues['issueCount'] == 2
 
-        assert 'S3_SPOOLDIR_12' in error.issues['stageIssues']['AmazonS3_01'][0]['message']
+        assert 'S3_COMMON_12' in error.issues['stageIssues']['AmazonS3_01'][0]['message']
         assert 'POST_PROCESSING' in error.issues['stageIssues']['AmazonS3_01'][0]['configGroup']
 
         assert 'S3_SPOOLDIR_14' in error.issues['stageIssues']['AmazonS3_01'][1]['message']
