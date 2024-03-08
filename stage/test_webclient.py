@@ -352,3 +352,63 @@ def test_linked_pagination(
         logger.error(record)
     assert len(records) == len(expected_records)
     assert all([er in records for er in expected_records])
+
+
+@sdc_min_version("5.10.0")
+def test_no_more_data_event_on_pagination_none(sdc_builder, sdc_executor, cleanup, server, test_name):
+
+    """
+    We test that if pagination mode is NONE, WebClient will send a no-more-data event once all the records are
+    fully processed.
+    """
+
+    from flask import Response
+
+    content_type = "application/json"
+    response_data = """
+{
+"id":1,"employee_name":"John Doe","employee_salary":320800,"employee_age":41
+}
+"""
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response(response_data, content_type=content_type)
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        pagination_mode="None"
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    webclient_origin >> wiretap.destination
+
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    finisher.react_to_events = True
+    finisher.on_record_error = "STOP_PIPELINE"
+    finisher.stage_record_preconditions = ["${record:eventType() == 'no-more-data'}"]
+    webclient_origin >= finisher
+
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    handler.start_work(work)
+    handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    output_records = wiretap.output_records
+    assert 1 == len(output_records)
+    assert 1 == output_records[0].field.get('id')
+    assert "John Doe" == output_records[0].field.get('employee_name')
+    assert 320800 == output_records[0].field.get('employee_salary')
+    assert 41 == output_records[0].field.get('employee_age')
