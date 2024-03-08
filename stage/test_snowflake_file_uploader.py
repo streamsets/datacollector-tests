@@ -20,8 +20,9 @@ import string
 import tempfile
 
 import pytest
+from streamsets.sdk.exceptions import StartError, StartingError
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import snowflake, sdc_enterprise_lib_min_version
+from streamsets.testframework.markers import snowflake, sdc_enterprise_lib_min_version, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -409,6 +410,115 @@ def test_purge_temporary_files(sdc_builder, sdc_executor, snowflake):
 
         files_in_tmp = int(sdc_executor.execute_shell(f'ls {snowflake_directory}/*/*.csv | wc -l').stdout)
         assert 0 == files_in_tmp
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        engine.dispose()
+
+
+@snowflake
+@sdc_min_version('5.10.0')
+@pytest.mark.parametrize('wrong_object', ["Database", "Schema"])
+def test_wrong_database_schema(sdc_builder, sdc_executor, snowflake, wrong_object):
+    """Verify that the Snowflake File Uploader uses the configured databases and schema if available"""
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Stoarge container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    work_dir = _prepare_work_dir(sdc_executor, DATA)
+    temporary_directory_path = ''
+
+    origin = pipeline_builder.add_stage('Directory', type='origin')
+    origin.file_name_pattern = '*.csv'
+    origin.data_format = 'WHOLE_FILE'
+    origin.files_directory = work_dir
+
+    snowflake_file_uploader = pipeline_builder.add_stage('Snowflake File Uploader')
+
+    snowflake_file_uploader.set_attributes(stage=stage_name, temporary_directory_path=temporary_directory_path)
+
+    pipeline_finished = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    origin >> snowflake_file_uploader
+    origin >= pipeline_finished
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    if wrong_object == 'Database':
+        snowflake_file_uploader.stage_database = "WRONG_OBJ"
+    elif wrong_object == 'Schema':
+        snowflake_file_uploader.stage_schema = "WRONG_OBJ"
+
+    sdc_executor.add_pipeline(pipeline)
+    engine = snowflake.engine
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        pytest.fail("Pipeline should have failed validation with SNOWFLAKE_16, wrong schema or database")
+    except (StartError, StartingError) as e:
+        assert 'SNOWFLAKE_16' in e.message
+        assert wrong_object.lower() in e.message
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        engine.dispose()
+
+
+@snowflake
+@sdc_min_version('5.10.0')
+@pytest.mark.parametrize('private_key_location', ['KEYPAIR', 'KEYPAIR_CONTENT'])
+def test_key_pair_authentication(sdc_builder, sdc_executor, snowflake, private_key_location):
+    """
+        Similar to test_basic, but using Key Pair authentication.
+    """
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Stoarge container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    work_dir = _prepare_work_dir(sdc_executor, DATA)
+    temporary_directory_path = f'{tempfile.gettempdir()}/{get_random_string()}'
+
+    origin = pipeline_builder.add_stage('Directory', type='origin')
+    origin.file_name_pattern = '*.csv'
+    origin.data_format = 'WHOLE_FILE'
+    origin.files_directory = work_dir
+
+    snowflake_file_uploader = pipeline_builder.add_stage('Snowflake File Uploader')
+
+    snowflake_file_uploader.set_attributes(stage=stage_name,
+                                           temporary_directory_path=temporary_directory_path,
+                                           authentication_method=private_key_location,
+                                           private_key_path=snowflake.private_key_file_path,
+                                           private_key_content=snowflake.private_key_file_contents,
+                                           private_key_password=snowflake.private_key_passphrase)
+
+    pipeline_finished = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    origin >> snowflake_file_uploader
+    origin >= pipeline_finished
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(f"Select cast(t.$1 as integer), t.$2 from @{stage_name} t")
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
+        result.close()
+        assert data_from_database == [(row['id'], row['name']) for row in ROWS_IN_DATABASE]
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
         snowflake.drop_entities(stage_name=stage_name)
