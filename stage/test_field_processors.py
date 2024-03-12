@@ -636,7 +636,7 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     with a high precision.  The converter will convert this to DECIMAL type, and we assert that all digits were
     preserved in the process.
     """
-    decimal_str_val = '11235813213455.55342113853211';
+    decimal_str_val = '11235813213455.55342113853211'
     raw_data = json.dumps([{'largeDecimal': decimal_str_val}])
     field_type_converter_configs = [
         {
@@ -689,8 +689,73 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     assert field_output[0].field['largeDecimal'].value == Decimal(decimal_str_val)
 
 
+@sdc_min_version('5.10.0')
+def test_field_type_converter_decimal_headers(sdc_builder, sdc_executor):
+    decimal_val = '1125.3211'
+    raw_data = json.dumps({"decimalAsString": "1125.3211", "decimalAsNumber": 1125.3211})
+    field_type_converter_configs = [
+        {
+            'fields': ['/decimalAsString'],
+            'targetType': 'DECIMAL',
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
+        }, {
+            'fields': ['/decimalAsNumber'],
+            'targetType': 'DECIMAL',
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
+        }
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='MULTIPLE_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
+                                               field_type_converter_configs=field_type_converter_configs)
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_type_converter_fields >> wiretap.destination
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    record = wiretap.output_records[0]
+
+    assert 'decimalAsString' in record.field, 'decimalAsString not found in record'
+    assert 'decimalAsNumber' in record.field, 'decimalAsNumber not found in record'
+
+    decimal_as_string = record.field['decimalAsString']
+    decimal_as_number = record.field['decimalAsNumber']
+    # assert the type
+    assert decimal_as_string.type == 'DECIMAL', f'Expected Decimal, but got {decimal_as_string.type}'
+    assert decimal_as_number.type == 'DECIMAL', f'Expected Decimal, but got {decimal_as_number.type}'
+    # value
+    assert decimal_as_string.value == Decimal(decimal_val), 'Not matching value for decimal'
+    assert decimal_as_number.value == Decimal(decimal_val), 'Not matching value for decimal'
+    # that headers exist
+    assert 'scale' in decimal_as_string.attributes, 'Scale not found in headers for decimal_as_string'
+    assert 'precision' in decimal_as_string.attributes, 'Precision not found in headers for decimal_as_string'
+    assert 'scale' in decimal_as_number.attributes, 'Scale not found in headers for decimal_as_number'
+    assert 'precision' in decimal_as_number.attributes, 'Precision not found in headers for decimal_as_number'
+    # and their value
+    assert decimal_as_string.attributes[
+               'scale'] == '4', f'Got scale {decimal_as_string.attributes["scale"]}, expected 4'
+    assert decimal_as_string.attributes[
+               'precision'] == '8', f'Got precision {decimal_as_string.attributes["precision"]}, expected 8'
+    assert decimal_as_number.attributes[
+               'scale'] == '4', f'Got scale {decimal_as_number.attributes["scale"]}, expected 4'
+    assert decimal_as_number.attributes[
+               'precision'] == '8', f'Got precision {decimal_as_number.attributes["precision"]}, expected 8'
+
+
 # SDC-11561: File Type Converter doesn't work properly with null in MAP and LIST types
-@sdc_min_version('3.9.0') # For the JavaScript processor use
+@sdc_min_version('3.9.0')  # For the JavaScript processor use
 def test_field_type_converter_null_map(sdc_builder, sdc_executor):
     """Make sure that the processor doesn't fail (does a no-op) on a map that is null."""
     builder = sdc_builder.get_pipeline_builder()
