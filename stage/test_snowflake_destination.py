@@ -1431,8 +1431,14 @@ def test_datadrift_add_column_error(sdc_builder, sdc_executor, snowflake):
         result.close()
         assert len(data_from_database) == 0
         assert len(wiretap.error_records) == 1
-        assert 'SNOWFLAKE_62' in wiretap.error_records[0].header['errorCode']
-        assert 'Error when adding column' in wiretap.error_records[0].header['errorMessage']
+
+        if Version(sdc_executor.version) >= Version('5.10.0'):
+            assert 'SNOWFLAKE_92' in wiretap.error_records[0].header['errorCode']
+            assert 'Unable to add columns to table' in wiretap.error_records[0].header['errorMessage']
+        else:
+            assert 'SNOWFLAKE_62' in wiretap.error_records[0].header['errorCode']
+            assert 'Error when adding column' in wiretap.error_records[0].header['errorMessage']
+
 
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
@@ -4119,6 +4125,15 @@ def test_type_conversion_error_contains_helpful_information(
             assert number_of_expected_errors in error_message
             assert row_and_column_information in error_message
 
+    def check_error_information_v510(error_code, technical_message):
+        assert error_code == internal_error_code
+
+        assert concrete_error_information in technical_message
+        if not processing_cdc_data:
+            assert loading_status in technical_message
+            assert number_of_expected_errors in technical_message
+            assert row_and_column_information in technical_message
+
     try:
         sdc_executor.start_pipeline(pipeline=pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
@@ -4127,12 +4142,18 @@ def test_type_conversion_error_contains_helpful_information(
         error_records = wiretap.error_records
         assert len(error_records) == num_records
         for error_record in error_records:
-            check_error_information(error_record.header['errorCode'], error_record.header['errorMessage'], True)
+            if Version(sdc_executor.version) >= Version('5.10.0'):
+                check_error_information_v510(error_record.header['errorCode'], error_record.header['errorStackTrace'])
+            else:
+                check_error_information(error_record.header['errorCode'], error_record.header['errorMessage'], True)
 
         stage_errors = sdc_executor.get_stage_errors(pipeline, snowflake_destination)
         if not processing_cdc_data:
             assert len(stage_errors) == 1
-            check_error_information(stage_errors[0].error_code, stage_errors[0].error_message, False)
+            if Version(sdc_executor.version) >= Version('5.10.0'):
+                check_error_information_v510(stage_errors[0].error_code, stage_errors[0]._data['technicalMessage'])
+            else:
+                check_error_information(stage_errors[0].error_code, stage_errors[0].error_message, False)
         else:
             assert len(stage_errors) == 0
 

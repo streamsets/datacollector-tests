@@ -449,10 +449,13 @@ def test_wrong_database_schema(sdc_builder, sdc_executor, snowflake, wrong_objec
     origin >> snowflake_file_uploader
     origin >= pipeline_finished
 
+    expected_prefix = None
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     if wrong_object == 'Database':
+        expected_prefix = '"WRONG_OBJ"."STF_SCHEMA"'
         snowflake_file_uploader.stage_database = "WRONG_OBJ"
     elif wrong_object == 'Schema':
+        expected_prefix = '"STF_DB"."WRONG_OBJ"'
         snowflake_file_uploader.stage_schema = "WRONG_OBJ"
 
     sdc_executor.add_pipeline(pipeline)
@@ -462,7 +465,7 @@ def test_wrong_database_schema(sdc_builder, sdc_executor, snowflake, wrong_objec
         pytest.fail("Pipeline should have failed validation with SNOWFLAKE_16, wrong schema or database")
     except (StartError, StartingError) as e:
         assert 'SNOWFLAKE_16' in e.message
-        assert wrong_object.lower() in e.message
+        assert 'describe stage {0}."{1}"'.format(expected_prefix, stage_name) in e.message
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
         snowflake.drop_entities(stage_name=stage_name)
