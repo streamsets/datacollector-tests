@@ -569,6 +569,9 @@ def test_hadoop_fs_origin_standalone_multi_thread(sdc_builder, sdc_executor, clu
             cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, f'{i}{hadoop_fs_filename}'),
                                       data='\n'.join(file_lines))
 
+        # HDFS does not process files created less than 5 seconds ago by default, so we must wait a bit
+        time.sleep(10)
+
         # We want to verify the amount of records
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished(timeout_sec=180)
 
@@ -781,6 +784,9 @@ def test_hadoop_fs_origin_standalone_simple_ordering(sdc_builder, sdc_executor, 
         cluster.hdfs.client.makedirs(hadoop_fs_folder)
         for i in range(number_of_files):
             cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, f'{filename}_{i}'), data='\n'.join(lines_in_file))
+
+        # HDFS does not process files created less than 5 seconds ago by default, so we must wait a bit
+        time.sleep(10)
 
         # Run the pipeline until there is no more data
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished(timeout_sec=180)
