@@ -15,6 +15,7 @@
 import logging
 import os
 import string
+import time
 
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
@@ -88,6 +89,9 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
             blob_client = azure.storage.get_blob_client(container=container_name, blob=blob_path)
             blob_client.upload_blob(data[idx])
             blob_clients.append(blob_client)
+
+        # HDFS does not process files created less than 5 seconds ago by default, so we must wait a bit
+        time.sleep(10)
 
         logger.debug('Starting Hadoop FS Standalone pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished()
