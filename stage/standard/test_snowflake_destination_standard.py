@@ -329,6 +329,21 @@ def test_auto_create_data_types(sdc_builder, sdc_executor, input, converter_type
             'scale': 2
         }]
 
+    # we use this to fix decimal precision to 38,0
+    expression_evaluator = builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(field_attribute_expressions=[
+        {
+            'fieldToSet': '/VALUE',
+            'attributeToSet': 'precision',
+            'fieldAttributeExpression': '38'
+        },
+        {
+            'fieldToSet': '/VALUE',
+            'attributeToSet': 'scale',
+            'fieldAttributeExpression': '0'
+        }]
+    )
+
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
@@ -344,7 +359,7 @@ def test_auto_create_data_types(sdc_builder, sdc_executor, input, converter_type
                                          table_auto_create=True,
                                          on_record_error='STOP_PIPELINE')
 
-    origin >> converter >> snowflake_destination
+    origin >> converter >> expression_evaluator >> snowflake_destination
     pipeline = builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
 
