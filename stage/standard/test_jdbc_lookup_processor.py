@@ -766,9 +766,9 @@ def test_validate_single_and_multiple_records(sdc_builder, sdc_executor, databas
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
-        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = ${{record:value("/id")}}'
+        query_str = f'SELECT `name` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
     else:
-        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = ${{record:value("/id")}}'
+        query_str = f'SELECT "name" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
     jdbc_lookup.set_attributes(sql_query=query_str,
                                column_mappings=[])
 
@@ -812,9 +812,9 @@ def test_default_value(sdc_builder, sdc_executor, database, credential_store):
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
-        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+        query_str = f'SELECT `name` FROM `{table_name}` WHERE `id` = -1'
     else:
-        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = -1'
+        query_str = f'SELECT "name" FROM "{table_name}" WHERE "id" = -1'
     column_mappings = [dict(defaultValue='Albert',
                             dataType='STRING',
                             columnName="name",
@@ -824,7 +824,8 @@ def test_default_value(sdc_builder, sdc_executor, database, credential_store):
 
     wiretap = pipeline_builder.add_wiretap()
     dev_raw_data_source >> jdbc_lookup >> wiretap.destination
-    pipeline = pipeline_builder.build(title='JDBC Lookup Default Value').configure_for_environment(database, credential_store)
+    pipeline = pipeline_builder.build(title='JDBC Lookup Default Value')\
+        .configure_for_environment(database, credential_store)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -862,9 +863,9 @@ def test_empty_default_value(sdc_builder, sdc_executor, database, credential_sto
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
-        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+        query_str = f'SELECT `name` FROM `{table_name}` WHERE `id` = -1'
     else:
-        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = -1'
+        query_str = f'SELECT "name" FROM "{table_name}" WHERE "id" = -1'
     column_mappings = [dict(defaultValue='',
                             dataType=data_type,
                             columnName="name",
@@ -913,9 +914,9 @@ def test_retry_on_cache_miss(sdc_builder, sdc_executor, database, credential_sto
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
-        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = ${{record:value("/id")}}'
+        query_str = f'SELECT `name` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
     else:
-        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = ${{record:value("/id")}}'
+        query_str = f'SELECT "name" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
     column_mappings = [dict(defaultValue='Albert',
                             dataType='STRING',
                             field='/name',
