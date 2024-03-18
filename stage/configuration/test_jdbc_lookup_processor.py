@@ -348,9 +348,15 @@ def test_minimum_idle_connections(sdc_builder, sdc_executor):
 
 
 @database
-@pytest.mark.parametrize('stage_attributes', [{'missing_values_behavior': 'PASS_RECORD_ON'},
-                                              {'missing_values_behavior': 'SEND_TO_ERROR'}])
-def test_missing_values_behavior(sdc_builder, sdc_executor, database, credential_store, stage_attributes):
+@pytest.mark.parametrize('missing_values_behavior', ['PASS_RECORD_ON', 'SEND_TO_ERROR'])
+def test_missing_values_behavior(
+        sdc_builder,
+        sdc_executor,
+        database,
+        missing_values_behavior,
+        credential_store,
+        keep_data
+):
     """
     The pipeline looks like:
         dev_raw_data_source >> jdbc_lookup >> trash
@@ -368,35 +374,37 @@ def test_missing_values_behavior(sdc_builder, sdc_executor, database, credential
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
-        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+        query_str = f'SELECT `name` FROM `{table_name}` WHERE `id` = -1'
     else:
-        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = -1   '
+        query_str = f'SELECT "name" FROM "{table_name}" WHERE "id" = -1'
     jdbc_lookup.set_attributes(sql_query=query_str,
-                               missing_values_behavior=stage_attributes['missing_values_behavior'],
+                               missing_values_behavior=missing_values_behavior,
                                column_mappings=[])
 
     wiretap = pipeline_builder.add_wiretap()
     dev_raw_data_source >> jdbc_lookup >> wiretap.destination
-    pipeline = pipeline_builder.build(title='JDBC Lookup Missing Values').configure_for_environment(database, credential_store)
+    pipeline = pipeline_builder.build(title='JDBC Lookup Missing Values')\
+        .configure_for_environment(database, credential_store)
     sdc_executor.add_pipeline(pipeline)
 
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         output_records = wiretap.output_records
         error_records = wiretap.error_records
-        if stage_attributes['missing_values_behavior'] == 'PASS_RECORD_ON':
+        if missing_values_behavior == 'PASS_RECORD_ON':
             assert len(output_records) == len(raw_data) - 1, 'Wrong numbers of records'
             assert len(error_records) == 0, 'Wrong numbers of error records'
-        elif stage_attributes['missing_values_behavior'] == 'SEND_TO_ERROR':
+        elif missing_values_behavior == 'SEND_TO_ERROR':
             assert len(output_records) == 0, 'Wrong numbers of records'
             assert len(error_records) == len(raw_data) - 1, 'Wrong numbers of error records'
         else:
-            pytest.fail(f'Invalid missing_values_behavior attribute: {stage_attributes["missing_values_behavior"]}')
+            pytest.fail(f'Invalid missing_values_behavior attribute: {missing_values_behavior}')
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
+        if not keep_data:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
 
 
 @database
