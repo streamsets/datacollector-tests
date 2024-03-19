@@ -1940,7 +1940,10 @@ def test_table_el_eval_not_created(sdc_builder, sdc_executor, snowflake):
         assert len(data_from_database) == 4
 
         for error_record in wiretap.error_records:
-            assert 'SNOWFLAKE_61' == error_record.header['errorCode']
+            if Version(sdc_executor.version) >= Version('5.10.0'):
+                assert 'DATA_LOADING_20' == error_record.header['errorCode']
+            else:
+                assert 'SNOWFLAKE_61' == error_record.header['errorCode']
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
         snowflake.delete_staged_files(storage_path)
