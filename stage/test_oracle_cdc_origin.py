@@ -6509,25 +6509,27 @@ def test_unsupported_operation(
     buffer_location,
     parse_unsupported_operations,
 ):
-    """Test that unsupported operations are recognized and warned about by the stage.
-    """
+    """Test that unsupported operations are recognized and warned about by the stage."""
 
     # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
     if buffer_location == 'ON_DISK':
         if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
             pytest.skip('Local buffering on disk will fail in this SDC version')
-
+    
     db_engine = database.engine
+    connection = db_engine.connect()
     pipeline = None
     table = None
+
+    db_version = _get_oracle_db_version(connection)[0]
+    if db_version < 12:
+        pytest.skip("Required LOB is not available in the containers of Oracle versions <12")
 
     try:
         table_name = get_random_string(string.ascii_uppercase, 9)
         primary_column = get_random_string(string.ascii_uppercase, 9)
         # Operations involving the column will generate UNSUPPORTED operations
         too_long_column = get_random_string(string.ascii_uppercase, 126)
-
-        connection = db_engine.connect()
 
         table = sqlalchemy.Table(table_name,
                                  sqlalchemy.MetaData(),
@@ -6564,7 +6566,6 @@ def test_unsupported_operation(
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-
 
         records = [{primary_column: 1, too_long_column: 1}]
         txn = connection.begin()
