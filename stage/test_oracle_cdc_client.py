@@ -1167,6 +1167,10 @@ def test_set_lob_locator(
     For that we: LOB_WRITE, LOB_TRIM, LOB_ERASE and INSERT.
     """
 
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
     # Create a unique id or primary key for each row that will be inserted
     primary_column = DEFAULT_PK_COLUMN  # Primary column will always be present
     blob_column = DEFAULT_LOB_COLUMN
