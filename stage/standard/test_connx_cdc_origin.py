@@ -19,6 +19,7 @@ import string
 import random
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -118,7 +119,10 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
 
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('CONNX CDC')
-        origin.datasync_transform_or_group = transform_name
+        if Version(sdc_builder.version) < Version('5.9.0'):
+            origin.datasync_transform = transform_name
+        else:
+            origin.datasync_transform_or_group = transform_name
 
         wiretap = builder.add_wiretap()
 
@@ -165,7 +169,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('CONNX CDC')
-    origin.datasync_transform_or_group = transform_name
+    if Version(sdc_builder.version) < Version('5.9.0'):
+        origin.datasync_transform = transform_name
+    else:
+        origin.datasync_transform_or_group = transform_name
     origin.max_batch_size_in_records = max_batch_size
 
     wiretap = builder.add_wiretap()
@@ -213,7 +220,10 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('CONNX CDC')
-    origin.datasync_transform_or_group = transform_name
+    if Version(sdc_builder.version) < Version('5.9.0'):
+        origin.datasync_transform = transform_name
+    else:
+        origin.datasync_transform_or_group = transform_name
 
     finisher = builder.add_stage("Pipeline Finisher Executor")
     finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'connx-finalize-success'}"])
