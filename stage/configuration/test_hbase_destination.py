@@ -46,7 +46,12 @@ def test_fields(sdc_builder, sdc_executor, cluster, keep_data):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     # Set JSON Content to "Array of Objects" to make it easier to pass in DATA without extra processing.
-    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=json.dumps(DATA))
+    dev_raw_data_source.set_attributes(
+        data_format='JSON',
+        json_content='ARRAY_OBJECTS',
+        raw_data=json.dumps(DATA),
+        stop_after_first_batch=True
+    )
 
     hbase = pipeline_builder.add_stage('HBase', type='destination')
     hbase.set_attributes(fields=[dict(columnValue='/points', columnStorageType='TEXT', columnName='data:points')],
@@ -62,7 +67,7 @@ def test_fields(sdc_builder, sdc_executor, cluster, keep_data):
     try:
         logger.info('Creating HBase table %s ...', table_name)
         cluster.hbase.client.create_table(name=table_name, families={'data': {}})
-        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=180)
 
         table = cluster.hbase.client.table(table_name)
         # HappyBase's table.scan returns a row key and a dictionary of column data, which we roll up with a list
