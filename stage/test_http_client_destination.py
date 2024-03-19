@@ -245,10 +245,10 @@ def test_http_destination_oauth2_token_retry(sdc_builder, sdc_executor, http_cli
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         pytest.fail('Test should have raised an Exception with HTTP_32 - HTTP_38 exception, but did not')
     except RunError as e:
-        if Version(sdc_builder.version) >= Version('5.7.0'):
+        if Version(sdc_executor.version) >= Version('5.7.0'):
             # The change of the catch exception in 5.7 (COLLECTOR-4009) was only applied when "One Request per Batch"
             # is enabled. It was fixed in 5.8 (COLLECTOR-4117)
-            if Version(sdc_builder.version) == Version('5.7.0') and request_option == 'one_request_per_batch':
+            if Version(sdc_executor.version) == Version('5.7.0') and request_option == 'one_request_per_batch':
                 assert 'HTTP_41' in e.message
             assert 'HTTP_38' in str(sdc_executor.get_logs())
         else:
