@@ -133,7 +133,7 @@ def test_webclient_origin_response_data_format(
 
     webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=url,
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -149,6 +149,7 @@ def test_webclient_origin_response_data_format(
         webclient_origin.collect_mode = "Bytes"
 
     wiretap = pipeline_builder.add_wiretap()
+
     webclient_origin >> wiretap.destination
     pipeline = pipeline_builder.build(test_name)
 
@@ -234,16 +235,21 @@ def test_okhttp_webclient_origin_response_data_max_size(sdc_builder, sdc_executo
 @pytest.mark.parametrize("pages, items_per_page", [[1, 1], [4, 3]])
 def test_pagination_page(sdc_builder, sdc_executor, cleanup, server, test_name, pages, items_per_page):
 
+    """We test the page pagination by checking pages are processed sequentially,
+    and that every record in every page is generated.
+
+    Pagination should stop at page number @pages."""
+
     from flask import json, request
 
     handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    def page_paginated():
+    def serve():
         page = int(request.args.get("page"))
         return json.dumps({"records": [{"i": page + i} for i in range(items_per_page)]})
 
-    endpoint = Endpoint(page_paginated, ["GET"])
+    endpoint = Endpoint(serve, ["GET"])
     server.start([endpoint])
     cleanup(server.stop)
     server.ready()
@@ -251,7 +257,7 @@ def test_pagination_page(sdc_builder, sdc_executor, cleanup, server, test_name, 
 
     webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=url,
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -281,25 +287,27 @@ def test_pagination_page(sdc_builder, sdc_executor, cleanup, server, test_name, 
 @pytest.mark.parametrize("step, last", [[1, 1], [3, 12]])
 def test_pagination_offset(sdc_builder, sdc_executor, cleanup, server, test_name, step, last):
 
+    """We test the offset by ensuring the stage sends requests sequentially,
+    checking that the offset is correctly incremented by @step and
+    every record is present.
+
+    Pagination should stop at record number @last."""
+
     from flask import json, request
 
     handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    def page_paginated():
-        logger.error("A")
+    def serve():
         try:
             logger.error(request.args)
             offset = int(request.args.get("offset"))
         except Exception as e:
             logger.error(e)
             raise e
-        logger.error("B")
-        json.dumps({"records": [{"i": i} for i in range(offset, offset + step)]})
-        logger.error("C")
         return json.dumps({"records": [{"i": i} for i in range(offset, offset + step)]})
 
-    endpoint = Endpoint(page_paginated, ["GET"])
+    endpoint = Endpoint(serve, ["GET"])
     server.start([endpoint])
     cleanup(server.stop)
     server.ready()
@@ -309,7 +317,7 @@ def test_pagination_offset(sdc_builder, sdc_executor, cleanup, server, test_name
     logger.error(url)
     logger.error(requests.get(url.replace("${startAt}", "0")).text)
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=url,
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
@@ -337,15 +345,23 @@ def test_pagination_offset(sdc_builder, sdc_executor, cleanup, server, test_name
 
 
 @pytest.mark.parametrize(
-    "stop_condition, expected, generated", [["${false}", 4, 4], ["${record:value('/page') == 3}", 3, 4]]
+    "location, stop_condition, expected, generated",
+    [
+        ["body", "${false}", 4, 4],
+        ["body", "${record:value('/page') == 3}", 3, 4],
+        ["header", "${false}", 4, 4],
+        ["header", "${record:value('/page') == 3}", 3, 4],
+    ],
 )
-def test_pagination_link_in_field(
-    sdc_builder, sdc_executor, cleanup, server, test_name, stop_condition, expected, generated
+def test_linked_pagination(
+    sdc_builder, sdc_executor, cleanup, server, test_name, location, stop_condition, expected, generated
 ):
 
-    from flask import json
+    """Each response contains a link to the next request, either in the body or in the header."""
 
-    # Each page will contain $sub_records records.
+    from flask import json, Response
+
+    # Each page will contain @sub_records records.
     sub_records = 3
 
     class LinkedEndpoint:
@@ -353,7 +369,7 @@ def test_pagination_link_in_field(
             self.index = index
             self.last = last
 
-        def serve(self):
+        def serve_link_in_body(self):
             return json.dumps(
                 {
                     "page": f"{self.index}",
@@ -362,70 +378,7 @@ def test_pagination_link_in_field(
                 }
             )
 
-    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
-    pipeline_builder = handler.get_pipeline_builder()
-
-    linked_endpoints = [LinkedEndpoint(i, i >= generated) for i in range(1, generated + 1)]
-
-    endpoints = [Endpoint(le.serve, ["GET"], f"link_{le.index}") for le in linked_endpoints]
-
-    expected_records = [{"page": i, "offset": i + j} for i in range(1, expected + 1) for j in range(sub_records)]
-
-    server.start(endpoints)
-    cleanup(server.stop)
-    server.ready()
-
-    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
-    webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
-        request_endpoint=f"{server.url}/link_1",
-        max_batch_size_in_records=1,
-        batch_wait_time_in_ms=10,
-        ingestion_mode="Batch",
-        pagination_mode="LinkInBody",
-        result_field_path="/records",
-        next_page_link_field_path="/next",
-        next_page_link_base=server.url,  # TODO Mikel add check for this
-        stop_condition=stop_condition,
-    )
-    wiretap = pipeline_builder.add_wiretap()
-
-    webclient_origin >> wiretap.destination
-    pipeline = pipeline_builder.build(test_name)
-
-    work = handler.add_pipeline(pipeline)
-    cleanup(handler.stop_work, work)
-    handler.start_work(work)
-    handler.wait_for_metric(work, "input_record_count", expected, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
-
-    records = [{k: v for k, v in record.field.items()} for record in wiretap.output_records]
-    for record in records:
-        logger.error(record)
-    for record in expected_records:
-        logger.error(record)
-    assert len(records) == len(expected_records)
-    assert all([er in records for er in expected_records])
-
-
-@pytest.mark.parametrize(
-    "stop_condition, expected, generated",
-    [["${false}", 4, 4], ["${record:value('/page') == 3}", 3, 4]],  # Process all pages.  # Stop a page early.
-)
-def test_pagination_link_in_header(
-    sdc_builder, sdc_executor, cleanup, server, test_name, stop_condition, expected, generated
-):
-
-    from flask import json, Response
-
-    # Each page will contain $sub_records records.
-    sub_records = 3
-
-    class LinkedEndpoint:
-        def __init__(self, index, last=False):
-            self.index = index
-            self.last = last
-
-        def serve(self):
+        def serve_link_in_header(self):
             content = json.dumps(
                 {
                     "page": f"{self.index}",
@@ -440,7 +393,11 @@ def test_pagination_link_in_header(
     pipeline_builder = handler.get_pipeline_builder()
 
     linked_endpoints = [LinkedEndpoint(i, i >= generated) for i in range(1, generated + 1)]
-    endpoints = [Endpoint(le.serve, ["GET"], f"link_{le.index}") for le in linked_endpoints]
+
+    endpoints = [
+        Endpoint(le.serve_link_in_body if location == "body" else le.serve_link_in_header, ["GET"], f"link_{le.index}")
+        for le in linked_endpoints
+    ]
 
     expected_records = [{"page": i, "offset": i + j} for i in range(1, expected + 1) for j in range(sub_records)]
 
@@ -450,17 +407,19 @@ def test_pagination_link_in_header(
 
     webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
     webclient_origin.set_attributes(
-        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        library=LIBRARY,
         request_endpoint=f"{server.url}/link_1",
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
         ingestion_mode="Batch",
-        pagination_mode="LinkInHeader",
         result_field_path="/records",
-        next_page_link_header="next",
-        next_page_link_base=server.url,  # TODO Mikel add check for this
+        next_page_link_base=server.url,
         stop_condition=stop_condition,
     )
+    if location == "body":
+        webclient_origin.set_attributes(pagination_mode="LinkInBody", next_page_link_field_path="/next")
+    else:
+        webclient_origin.set_attributes(pagination_mode="LinkInHeader", next_page_link_header="next")
     wiretap = pipeline_builder.add_wiretap()
 
     webclient_origin >> wiretap.destination
@@ -474,3 +433,158 @@ def test_pagination_link_in_header(
     records = [{k: v for k, v in record.field.items()} for record in wiretap.output_records]
     assert len(records) == len(expected_records)
     assert all([er in records for er in expected_records])
+
+
+@pytest.mark.parametrize(
+    "method, body, content_type, expression",
+    [
+        ["Get", None, None, None],
+        ["Post", '{"hello": "there"}', "application/json", None],
+        ["Put", '{"hello": "there"}', "application/json", None],
+        ["Delete", None, None, None],
+        ["Expression", '{"hello": "there"}', "application/json", "POST"],
+    ],
+)
+def test_http_methods(sdc_builder, sdc_executor, cleanup, server, test_name, method, body, content_type, expression):
+
+    from flask import json, request
+
+    default_response = {"general": "kenobi"}
+    expected_request_body = json.loads(body) if body is not None else None
+    dumped_response = json.dumps(default_response)
+
+    def get():
+        return dumped_response
+
+    def post():
+        request_body = {}
+        try:
+            request_body = json.loads(request.json)
+        except:
+            return None, 400
+        if request_body == expected_request_body:
+            return dumped_response
+        else:
+            return None, 404
+
+    def put():
+        return post()
+
+    def delete():
+        return get()
+
+    def exp():
+        return post()
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    endpoints = {
+        "Get": Endpoint(get, ["GET"], "get"),
+        "Post": Endpoint(post, ["POST"], "post"),
+        "Put": Endpoint(put, ["PUT"], "put"),
+        "Delete": Endpoint(delete, ["DELETE"], "delete"),
+        "Expression": Endpoint(exp, ["POST"], "exp"),
+    }
+    endpoint = endpoints[method]
+
+    expected_records = [default_response]
+
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=f"{server.url}/{endpoint.path}",
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10000,
+        ingestion_mode="Batch",
+        wait_time_between_requests_in_ms=10000,
+        method=method,
+    )
+    if body is not None:
+        webclient_origin.set_attributes(request_body=json.dumps(body))
+    if expression is not None:
+        webclient_origin.set_attributes(method_expression=expression)
+    if content_type is not None:
+        # We don't need to set the header as JSON is set by default,
+        # but let's make it explicit to make changing this test easier.
+        webclient_origin.set_attributes(
+            common_headers=[{"commonHeaderName": "Content-Type", "commonHeaderValue": "application/json"}]
+        )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+    records = [{k: v for k, v in record.field.items()} for record in wiretap.output_records]
+    assert len(records) == len(expected_records)
+    assert all([er in records for er in expected_records])
+
+
+@sdc_min_version("5.10.0")
+def test_no_more_data_event_on_pagination_none(sdc_builder, sdc_executor, cleanup, server, test_name):
+
+    """
+    We test that if pagination mode is NONE, WebClient will send a no-more-data event once all the records are
+    fully processed.
+    """
+
+    from flask import Response
+
+    content_type = "application/json"
+    response_data = """
+{
+"id":1,"employee_name":"John Doe","employee_salary":320800,"employee_age":41
+}
+"""
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response(response_data, content_type=content_type)
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        pagination_mode="None",
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    webclient_origin >> wiretap.destination
+
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    finisher.react_to_events = True
+    finisher.on_record_error = "STOP_PIPELINE"
+    finisher.stage_record_preconditions = ["${record:eventType() == 'no-more-data'}"]
+    webclient_origin >= finisher
+
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    handler.start_work(work)
+    handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    output_records = wiretap.output_records
+    assert 1 == len(output_records)
+    assert 1 == output_records[0].field.get("id")
+    assert "John Doe" == output_records[0].field.get("employee_name")
+    assert 320800 == output_records[0].field.get("employee_salary")
+    assert 41 == output_records[0].field.get("employee_age")
