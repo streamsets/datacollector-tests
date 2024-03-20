@@ -102,9 +102,7 @@ def test_http_methods(sdc_builder, sdc_executor, cleanup, server, test_name, met
 
     webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
     webclient_processor.set_attributes(
-        library=LIBRARY,
-        request_endpoint=f"{server.url}/{endpoint.path}",
-        method=method,
+        library=LIBRARY, request_endpoint=f"{server.url}/{endpoint.path}", method=method, output_field="/"
     )
     if body is not None:
         if body_expression is None:
@@ -134,3 +132,97 @@ def test_http_methods(sdc_builder, sdc_executor, cleanup, server, test_name, met
     assert len(records) == len(expected_records)
     assert all([er in records for er in expected_records])
 
+
+@pytest.mark.parametrize("multiple_values_behavior", ["FIRST_ONLY", "ALL_AS_LIST", "SPLIT_INTO_MULTIPLE_RECORDS"])
+@pytest.mark.parametrize("json_content", ["ARRAY_OBJECTS", "MULTIPLE_OBJECTS"])
+def test_multiple_values_behavior(
+    sdc_builder, sdc_executor, cleanup, server, test_name, multiple_values_behavior, json_content
+):
+
+    """Verify that the processor produces the expected records in the expected format for all the
+    multiple values behaviour and json content combinations. The behavior is standard, and should
+    be the same across all the processor stages that support it."""
+
+    from flask import json
+
+    result_field = "result"
+    output_field = "output"
+    input_data = {"a": "b", "c": "d"}
+    raw_data = json.dumps([input_data])
+
+    response_data = {result_field: [{"e": "f"}, {"g": "h"}, {"i": "j"}]}
+
+    expected_records = []
+    # fmt: off
+    if json_content == "MULTIPLE_OBJECTS":
+        if multiple_values_behavior in {"FIRST_ONLY", "SPLIT_INTO_MULTIPLE_RECORDS"}:
+            expected_records.append({**input_data, **{output_field: response_data}})
+        elif multiple_values_behavior == "ALL_AS_LIST":
+            expected_records.append({**input_data, **{output_field: [response_data]}})
+        else:
+            pytest.fail(f"Invalid multiple_values_behavior: {multiple_values_behavior}.")
+    elif json_content == "ARRAY_OBJECTS":
+        if multiple_values_behavior == "FIRST_ONLY":
+            expected_records.append({**input_data, **{output_field: {
+                result_field: response_data[result_field][0]
+            }}})
+        elif multiple_values_behavior == "ALL_AS_LIST":
+            expected_records.append(
+                {**input_data, **{output_field: [
+                    {result_field: item} for item in response_data[result_field]
+                ]}}
+            )
+        elif multiple_values_behavior == "SPLIT_INTO_MULTIPLE_RECORDS":
+            for item in response_data[result_field]:
+                expected_records.append({**input_data, **{output_field: {result_field: item}}})
+        else:
+            pytest.fail(f"Invalid multiple_values_behavior: {multiple_values_behavior}.")
+    else:
+        pytest.fail(f"Invalid json_content: {json_content}.")
+    # fmt: on
+
+    def serve():
+        response = None
+        if json_content == "MULTIPLE_OBJECTS":
+            response = response_data
+        else:
+            response = [{result_field: result} for result in response_data[result_field]]
+        logger.error(response)
+        return json.dumps(response)
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON", json_content="ARRAY_OBJECTS", stop_after_first_batch=True, raw_data=raw_data
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library=LIBRARY,
+        request_endpoint=url,
+        json_content=json_content,
+        output_field=f"/{output_field}",
+        multiple_values_behavior=multiple_values_behavior,
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+    records = [{k: v for k, v in record.field.items()} for record in wiretap.output_records]
+    assert len(records) == len(expected_records)
+    assert all([er in records for er in expected_records])
