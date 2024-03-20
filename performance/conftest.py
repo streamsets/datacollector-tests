@@ -307,15 +307,31 @@ def elasticsearch_origin_index(elasticsearch, benchmark_args, keep_data):
     upper = benchmark_args.get('RECORD_COUNT', 5_000_000) + 100_000
 
     def generator():
-        for i in range(1, upper):
-            if i % 10_000 == 0:
-                logger.info(f'Inserting document with id/number {i}')
+        # ElasticSearch 7.x deprecated the _type but still accepted it with a warning, ElasticSearch 8.x completely
+        # removed the option to use it. The version check is done outside the loop to minimize the peformance loss,
+        # if done inside the loop the data generation takes way longer than it should.
 
-            yield {
-                "_index": index,
-                "_type": "data",
-                "_source": {"number": i}
-            }
+        major_version = int(elasticsearch.version.split('.')[0])
+
+        if major_version <= 8:
+            for i in range(1, upper):
+                if i % 10_000 == 0:
+                    logger.info(f'Inserting document with id/number {i}')
+
+                yield {
+                    "_index": index,
+                    "_type": "data",
+                    "_source": {"number": i}
+                }
+        else:
+            for i in range(1, upper):
+                if i % 10_000 == 0:
+                    logger.info(f'Inserting document with id/number {i}')
+
+                yield {
+                    "_index": index,
+                    "_source": {"number": i}
+                }
 
     logger.info('Creating index %s', index)
     elasticsearch.client.create_index(index)
