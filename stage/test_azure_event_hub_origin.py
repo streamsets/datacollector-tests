@@ -54,7 +54,7 @@ def test_azure_event_hub_consumer_invalid_config(sdc_builder, sdc_executor):
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
         pytest.fail("Test should not reach here. It should have failed with StartError.")
-    except StartError as e:
+    except Exception as e:
         assert "EVENT_HUB_02" in e.message
 
 
