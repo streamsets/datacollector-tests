@@ -313,7 +313,7 @@ def elasticsearch_origin_index(elasticsearch, benchmark_args, keep_data):
 
         major_version = int(elasticsearch.version.split('.')[0])
 
-        if major_version <= 8:
+        if major_version <= 7:
             for i in range(1, upper):
                 if i % 10_000 == 0:
                     logger.info(f'Inserting document with id/number {i}')
