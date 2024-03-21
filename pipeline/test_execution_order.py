@@ -100,17 +100,17 @@ def test_execution_order_multiple_lines(sdc_builder, sdc_executor, with_crossing
                                                  'expression': '${time:nowNanoTimestampString()}'}]
 
     expression_evaluator_2 = pipeline_builder.add_stage('Expression Evaluator')
-    expression_evaluator_2.field_expressions = [{'fieldToSet': '/f1', 'expression': '1'},
+    expression_evaluator_2.field_expressions = [{'fieldToSet': '/f1', 'expression': '2'},
                                                 {'fieldToSet': '/time',
                                                  'expression': '${time:nowNanoTimestampString()}'}]
 
     expression_evaluator_3 = pipeline_builder.add_stage('Expression Evaluator')
-    expression_evaluator_3.field_expressions = [{'fieldToSet': '/f1', 'expression': '2'},
+    expression_evaluator_3.field_expressions = [{'fieldToSet': '/f1', 'expression': '3'},
                                                 {'fieldToSet': '/time',
                                                  'expression': '${time:nowNanoTimestampString()}'}]
 
     expression_evaluator_4 = pipeline_builder.add_stage('Expression Evaluator')
-    expression_evaluator_4.field_expressions = [{'fieldToSet': '/f1', 'expression': '2'},
+    expression_evaluator_4.field_expressions = [{'fieldToSet': '/f1', 'expression': '4'},
                                                 {'fieldToSet': '/time',
                                                  'expression': '${time:nowNanoTimestampString()}'}]
 
@@ -157,18 +157,32 @@ def test_execution_order_multiple_lines(sdc_builder, sdc_executor, with_crossing
 
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert wiretap_1.output_records[0].field['f1'] == '1'
-    assert wiretap_2.output_records[0].field['f1'] == '1'
-    assert wiretap_3.output_records[0].field['f1'] == '2'
-    assert wiretap_4.output_records[0].field['f1'] == '2'
+    assert wiretap_2.output_records[0].field['f1'] == '2'
+    assert wiretap_3.output_records[0].field['f1'] == '3'
+    assert wiretap_4.output_records[0].field['f1'] == '4'
+
+    f1_1 = wiretap_1.output_records[0].field['f1']
+    f1_2 = wiretap_2.output_records[0].field['f1']
+    f1_3 = wiretap_3.output_records[0].field['f1']
+    f1_4 = wiretap_4.output_records[0].field['f1']
+
+    time_1 = wiretap_1.output_records[0].field['time']
+    time_2 = wiretap_2.output_records[0].field['time']
+    time_3 = wiretap_3.output_records[0].field['time']
+    time_4 = wiretap_4.output_records[0].field['time']
 
     assert str(wiretap_1.output_records[0].field['time']) < \
-           str(wiretap_3.output_records[0].field['time'])
+           str(wiretap_3.output_records[0].field['time'],
+               f'Comparing w1 & w3 failed: {f1_1} - {f1_3} :: {time_1} - {time_3}')
     assert str(wiretap_2.output_records[0].field['time']) < \
-           str(wiretap_3.output_records[0].field['time'])
+           str(wiretap_3.output_records[0].field['time'],
+               f'Comparing w2 & w3 failed: {f1_2} - {f1_3} :: {time_2} - {time_3}')
     assert str(wiretap_1.output_records[0].field['time']) < \
-           str(wiretap_4.output_records[0].field['time'])
+           str(wiretap_4.output_records[0].field['time'],
+               f'Comparing w1 & w4 failed: {f1_1} - {f1_4} :: {time_1} - {time_4}')
     assert str(wiretap_2.output_records[0].field['time']) < \
-           str(wiretap_4.output_records[0].field['time'])
+           str(wiretap_4.output_records[0].field['time'],
+               f'Comparing w2 & w4 failed: {f1_2} - {f1_4} :: {time_2} - {time_4}')
 
 
 @sdc_min_version('5.6.0')
