@@ -14,7 +14,7 @@
 # limitations under the License.
 
 import pytest
-from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.markers import sdc_min_version, web_client
 
 from stage.utils.webclient import deps, free_port, server, Endpoint, LIBRARY, RELEASE_VERSION, WEB_CLIENT
 from stage.utils.common import cleanup, test_name
@@ -25,7 +25,7 @@ import logging
 DEFAULT_TIMEOUT_IN_SEC = 30
 
 logger = logging.getLogger(__name__)
-pytestmark = [sdc_min_version(RELEASE_VERSION)]
+pytestmark = [sdc_min_version(RELEASE_VERSION), web_client]
 
 
 @pytest.mark.parametrize(
