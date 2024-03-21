@@ -14,6 +14,7 @@
 
 import logging
 import os
+import time
 
 import pytest
 from streamsets.sdk.utils import Version
@@ -185,6 +186,9 @@ def test_kaitai_processor_gif_s3_origin(sdc_builder, sdc_executor, aws, number_o
         # Insert objects into S3.
         for file_path in os.listdir(GIF_DIRECTORY_RELATIVE):
             client.upload_file(GIF_DIRECTORY_RELATIVE + "/" + file_path, s3_bucket, s3_key + file_path)
+
+        # AWS S3 Origin does not process files created less than 5 seconds ago by default, so we must wait a bit
+        time.sleep(10)
 
         sdc_executor.start_pipeline(s3_origin_pipeline)
         sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 9, 120)
