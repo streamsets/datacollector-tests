@@ -14,16 +14,16 @@
 
 import json
 import logging
+from time import sleep
 
 import pytest
 
-from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.markers import sdc_min_version, websocket
 
 logger = logging.getLogger(__name__)
 
-input_data = [{'name': 'Rafa Nadal', 'country': 'Spain'},
-              {'name': 'Roger Federer', 'country': 'Switzerland'},
+input_data = [{'name': 'Roger Federer', 'country': 'Switzerland'},
+              {'name': 'Rafa Nadal', 'country': 'Spain'},
               {'name': 'Pete Sampras', 'country': 'USA'}]
 
 
@@ -61,11 +61,11 @@ def test_websocket_client_origin_proxy_support(sdc_builder, sdc_executor, use_pr
         websocket_client.set_attributes(
             resource_url='ws://random:9999',
             proxy_hostname='localhost',
-            proxy_port=8080
+            proxy_port=9090
         )
     else:
         websocket_client.set_attributes(
-            resource_url='ws://localhost:8080',
+            resource_url='ws://localhost:9090',
         )
 
     websocket_client >> trash
@@ -75,7 +75,7 @@ def test_websocket_client_origin_proxy_support(sdc_builder, sdc_executor, use_pr
 
     # Server pipeline creation
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    websocket_server = pipeline_builder.add_stage('WebSocket Server').set_attributes(websocket_listening_port=8080,
+    websocket_server = pipeline_builder.add_stage('WebSocket Server').set_attributes(websocket_listening_port=9090,
                                                                                      application_id='APPLICATION_ID',
                                                                                      data_format='JSON')
     wiretap = pipeline_builder.add_wiretap()
@@ -106,11 +106,60 @@ def test_websocket_client_origin_proxy_support(sdc_builder, sdc_executor, use_pr
     finally:
         # Stop the pipeline and verify pipeline's status
         sdc_executor.stop_pipeline(server_pipeline)
-        sdc_executor.stop_pipeline(client_pipeline)
+        sdc_executor.stop_pipeline(pipeline=client_pipeline, force=True)
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'use_proxy_credentials': False, 'use_proxy': True},
-                                              {'use_proxy_credentials': True, 'use_proxy': True}])
-def test_proxy_requires_credentials(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@websocket
+@sdc_min_version("5.10.0")
+@pytest.mark.parametrize('proxy_requires_credentials', [True, False])
+def test_proxy_credentials(sdc_builder, sdc_executor, websocket, proxy_requires_credentials):
+    """
+    Test sending messages between Websocket Client and Websocket Server with proxy enabled and requiring credentials.
+
+    We do so by sending some records with a Websocket Client Origin and checking that the websocket server
+    correctly receives them and sends appropriate response.
+
+    The pipelines look like this:
+
+    Websocket Client Origin
+        websocket_client >> wiretap
+    """
+    # Client pipeline creation
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    websocket_client = pipeline_builder.add_stage('WebSocket Client', type='origin').set_attributes(
+        resource_url=websocket.uri,
+        request_data=json.dumps(input_data[0]),
+        data_format='JSON',
+        send_raw_response=True,
+        use_proxy=True,
+        proxy_hostname=websocket.proxy_hostname,
+        proxy_port=websocket.proxy_port,
+        proxy_requires_credentials=proxy_requires_credentials,
+        proxy_username=websocket.proxy_username,
+        proxy_password=websocket.proxy_password,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    websocket_client >> wiretap.destination
+
+    client_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(client_pipeline)
+
+    # Start WebSocket Client pipeline.
+    logger.info("Starting websocket client origin pipeline..")
+    try:
+        sdc_executor.start_pipeline(client_pipeline)
+        # We wait three seconds - One for sending request data and then some buffer time
+        sleep(3)
+    finally:
+        sdc_executor.stop_pipeline(pipeline=client_pipeline, force=True)
+
+    result = wiretap.output_records
+    if proxy_requires_credentials:
+        output_records = [{k: v for k, v in record.field.items()} for record in result]
+
+        assert len(result) == 2, 'Expected exactly 2 output records'
+        assert output_records[0] == {'name': 'Roger Federer', 'country': 'Switzerland'}
+    else:
+        assert len(result) == 0, 'Expected exactly 0 output record'
