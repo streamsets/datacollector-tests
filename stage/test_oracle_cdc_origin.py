@@ -2124,8 +2124,8 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_locat
     type_create = f'CREATE TYPE TPE_{table_name} AS OBJECT (EX_ARRAY ARRAY_{table_name}, EX_VARCHAR VARCHAR2(60 BYTE))'
     table_create = f'CREATE TABLE {table_name} (ID_EX NUMBER NOT NULL ENABLE, ADT_EX TPE_{table_name}, ' \
         f'NAME_EX VARCHAR2(60 BYTE), CONSTRAINT PK_{table_name}_EX PRIMARY KEY (ID_EX))'
-    names_insert = ["INDURAIN","PANTANI","ULRICH"]
-    num_records = len(names_insert);
+    names_insert = ["INDURAIN", "PANTANI", "ULRICH"]
+    num_records = len(names_insert)
 
     try:
         connection.execute(type_array_create)
@@ -2162,8 +2162,8 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_locat
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        status = sdc_executor.start_pipeline(pipeline);
-        connection.execute(f"UPDATE {table_name} SET name_ex = 'TONI'");
+        status = sdc_executor.start_pipeline(pipeline)
+        connection.execute(f"UPDATE {table_name} SET name_ex = 'TONI'")
 
         if db_version[0] >= 12:
             # Version 12 LogMiner has support for Redo Logs that contain ADT columns
@@ -2178,11 +2178,18 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_locat
                 # With default parser throws the exception SDC-15822"""
                 with pytest.raises(RunningError) as exception_info:
                     status.wait_for_status('RUN_ERROR', timeout_sec=300)
+
                 assert 'JDBC_405 - ' in f'{exception_info.value}'
-                assert 'UPDATE' in f'{exception_info.value}'
+
+                if Version(sdc_executor.version) >= Version('5.8.0'):
+                    exception_stack_trace = exception_info.value.response['attributes']['ERROR_STACKTRACE']
+                    assert 'UPDATE' in exception_stack_trace
+                    assert 'JDBC_93' in exception_stack_trace
+                else:
+                    assert 'UPDATE' in f'{exception_info.value}'
         else:
             # Version 11 LogMiner does not support Redo Logs for ADT columns, we check we have no output records
-            connection.execute(f"TRUNCATE TABLE {table_name}");
+            connection.execute(f"TRUNCATE TABLE {table_name}")
             status.wait_for_status('FINISHED', timeout_sec=300)
             assert len(wiretap.output_records) == 0
 
