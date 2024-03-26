@@ -55,6 +55,7 @@ OPERATION = 'OPERATION'
 PRIMARY_KEY_DEFINITION = 'PRIMARY_KEY_DEFINITION'
 PRIMARY_KEY_VALUE_UPDATE = 'PRIMARY_KEY_VALUE_UPDATE'
 PRIMARY_KEY_PREVIOUS_VALUE = 'PRIMARY_KEY_PREVIOUS_VALUE'
+CDC_METADATA_RECORD_FIELDS = [TABLE, OPERATION, PRIMARY_KEY_DEFINITION, PRIMARY_KEY_VALUE_UPDATE]
 
 SIMPLE_ROWS = [
     {'id': 1, 'name': 'Nicky Jam'},
@@ -471,7 +472,7 @@ class CDCRecordCreator:
         def prepend_slash(items: list):
             return [f'/{item}' for item in items]
 
-        return prepend_slash([TABLE, OPERATION, PRIMARY_KEY_DEFINITION, PRIMARY_KEY_VALUE_UPDATE])
+        return prepend_slash(CDC_METADATA_RECORD_FIELDS)
 
     def cdc_header_expressions(self) -> list:
         """
@@ -521,13 +522,13 @@ class CDCRecordCreator:
             primary_key_update_header.append(row_primary_key_update_header)
         return primary_key_update_header
 
-    def generate_setup_records(self) -> list:
-        return self.generate_records(self.setup_operations)
+    def generate_setup_records(self, generate_metadata: bool = True) -> list:
+        return self.generate_records(self.setup_operations, generate_metadata)
 
-    def generate_cdc_records(self) -> list:
-        return self.generate_records(self.cdc_operations)
+    def generate_cdc_records(self, generate_metadata: bool = True) -> list:
+        return self.generate_records(self.cdc_operations, generate_metadata)
 
-    def generate_records(self, row_operations: dict) -> list:
+    def generate_records(self, row_operations: dict, generate_metadata: bool = True) -> list:
         """
             Generates records and headers from the operations defined.
         """
@@ -535,13 +536,17 @@ class CDCRecordCreator:
         primary_key_values_updates = self.generate_primary_key_update_header(row_operations)
         for index in range(0, len(row_operations)):
             row_operation = row_operations[index]
-            records.append({
-                TABLE: row_operation.get(TABLE),
-                PRIMARY_KEY_DEFINITION: self.primary_key_definition,
-                OPERATION: OPERATION_TYPE.get(row_operation.get(OPERATION)),
-                PRIMARY_KEY_VALUE_UPDATE: primary_key_values_updates[index],
-                **row_operation.get(ROW)
-            })
+
+            record = {**row_operation.get(ROW)}
+            if generate_metadata:
+                record.update({
+                    TABLE: row_operation.get(TABLE),
+                    PRIMARY_KEY_DEFINITION: self.primary_key_definition,
+                    OPERATION: OPERATION_TYPE.get(row_operation.get(OPERATION)),
+                    PRIMARY_KEY_VALUE_UPDATE: primary_key_values_updates[index]
+                })
+
+            records.append(record)
         return records
 
 

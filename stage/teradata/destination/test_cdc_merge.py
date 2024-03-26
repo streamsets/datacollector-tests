@@ -121,25 +121,25 @@ def test_cdc_merge_operations(sdc_builder, sdc_executor, teradata, cleanup, tera
     cdc_records = data_loading_cdc_record_creator.generate_cdc_records()
 
     if len(setup_records) > 0:
-        setup_pipeline_builder = data_loading_pipeline_handler_creator.create()
-        dev_raw_data_source = setup_pipeline_builder.dev_raw_data_source_origin(setup_records)
-        expression_evaluator = setup_pipeline_builder.expression_evaluator(cdc_header_expressions)
-        field_remover = setup_pipeline_builder.field_remover(cdc_field_remover_fields)
-        teradata_destination = setup_pipeline_builder.destination(attributes=teradata_attributes)
+        setup_pipeline_handler = data_loading_pipeline_handler_creator.create()
+        dev_raw_data_source = setup_pipeline_handler.dev_raw_data_source_origin(setup_records)
+        expression_evaluator = setup_pipeline_handler.expression_evaluator(cdc_header_expressions)
+        field_remover = setup_pipeline_handler.field_remover(cdc_field_remover_fields)
+        teradata_destination = setup_pipeline_handler.destination(attributes=teradata_attributes)
 
         dev_raw_data_source >> expression_evaluator >> field_remover >> teradata_destination
 
-        setup_pipeline_builder.build(teradata).run()
+        setup_pipeline_handler.build(teradata).run()
 
-    cdc_pipeline_builder = data_loading_pipeline_handler_creator.create()
-    dev_raw_data_source = cdc_pipeline_builder.dev_raw_data_source_origin(cdc_records)
-    expression_evaluator = cdc_pipeline_builder.expression_evaluator(cdc_header_expressions)
-    field_remover = cdc_pipeline_builder.field_remover(cdc_field_remover_fields)
-    teradata_destination = cdc_pipeline_builder.destination(attributes=teradata_attributes)
+    cdc_pipeline_handler = data_loading_pipeline_handler_creator.create()
+    dev_raw_data_source = cdc_pipeline_handler.dev_raw_data_source_origin(cdc_records)
+    expression_evaluator = cdc_pipeline_handler.expression_evaluator(cdc_header_expressions)
+    field_remover = cdc_pipeline_handler.field_remover(cdc_field_remover_fields)
+    teradata_destination = cdc_pipeline_handler.destination(attributes=teradata_attributes)
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> teradata_destination
 
-    cdc_pipeline_builder.build(teradata).run()
+    cdc_pipeline_handler.build(teradata).run()
 
     data_from_database = teradata_manager.select_from_table(table)
     assert data_from_database == cdc_test_case.get(EXPECTED_RESULT)
@@ -193,25 +193,25 @@ def test_cdc_merge_multiple_tables(sdc_builder, sdc_executor, teradata, cleanup,
     set_table_per_record(cdc_records, table_names)
 
     if len(setup_records) > 0:
-        setup_pipeline_builder = data_loading_pipeline_handler_creator.create()
-        dev_raw_data_source = setup_pipeline_builder.dev_raw_data_source_origin(setup_records)
-        expression_evaluator = setup_pipeline_builder.expression_evaluator(cdc_header_expressions)
-        field_remover = setup_pipeline_builder.field_remover(cdc_field_remover_fields)
-        teradata_destination = setup_pipeline_builder.destination(attributes=teradata_attributes)
+        setup_pipeline_handler = data_loading_pipeline_handler_creator.create()
+        dev_raw_data_source = setup_pipeline_handler.dev_raw_data_source_origin(setup_records)
+        expression_evaluator = setup_pipeline_handler.expression_evaluator(cdc_header_expressions)
+        field_remover = setup_pipeline_handler.field_remover(cdc_field_remover_fields)
+        teradata_destination = setup_pipeline_handler.destination(attributes=teradata_attributes)
 
         dev_raw_data_source >> expression_evaluator >> field_remover >> teradata_destination
 
-        setup_pipeline_builder.build(teradata).run()
+        setup_pipeline_handler.build(teradata).run()
 
-    cdc_pipeline_builder = data_loading_pipeline_handler_creator.create()
-    dev_raw_data_source = cdc_pipeline_builder.dev_raw_data_source_origin(cdc_records)
-    expression_evaluator = cdc_pipeline_builder.expression_evaluator(cdc_header_expressions)
-    field_remover = cdc_pipeline_builder.field_remover(cdc_field_remover_fields)
-    teradata_destination = cdc_pipeline_builder.destination(attributes=teradata_attributes)
+    cdc_pipeline_handler = data_loading_pipeline_handler_creator.create()
+    dev_raw_data_source = cdc_pipeline_handler.dev_raw_data_source_origin(cdc_records)
+    expression_evaluator = cdc_pipeline_handler.expression_evaluator(cdc_header_expressions)
+    field_remover = cdc_pipeline_handler.field_remover(cdc_field_remover_fields)
+    teradata_destination = cdc_pipeline_handler.destination(attributes=teradata_attributes)
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> teradata_destination
 
-    cdc_pipeline_builder.build(teradata).run()
+    cdc_pipeline_handler.build(teradata).run()
 
     for table, expected_result_per_table in zip(tables, cdc_test_case.get(EXPECTED_RESULT).values()):
         data_from_database = teradata_manager.select_from_table(table)
