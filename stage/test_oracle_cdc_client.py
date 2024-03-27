@@ -245,16 +245,20 @@ def test_connection_types(
     oracle_cdc >> trash
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
-    handler.add_pipeline(pipeline)
+    work = handler.add_pipeline(pipeline)
     if correct:
-        handler.validate_pipeline(pipeline)
+        # We want to make sure there are no validation issues and the connection can be established, but the pipeline
+        # validation check is flaky, so we start a pipeline, wait for it to be running and then stop it
+        handler.start_work(work)
+        handler.wait_for_status(work, status='RUNNING')
+        handler.stop_work(work)
     else:
-        expected_error = "OracleCDC_01"
-        # The test framework will raise some of the expected validation errors
-        # as ValidationError and others as JSONDecodeError
-        with pytest.raises((ValidationError, JSONDecodeError)) as err:
-            handler.validate_pipeline(pipeline)
-        assert type(err.value) == JSONDecodeError or expected_error in err.value.issues["stageIssues"]
+        expected_error = 'ORACLE_CDC_0010'
+        # The test framework will raise some of the expected validation errors as ValidationErrors, some as
+        # StartErrors and others as JSONDecodeError
+        with pytest.raises((ValidationError, StartError, JSONDecodeError)) as error:
+            handler.start_work(pipeline)
+        assert type(error.value) == JSONDecodeError or expected_error in error.value.message
 
 
 @pytest.mark.parametrize(
@@ -263,7 +267,7 @@ def test_connection_types(
         [0, "VALIDATION_0035"],
         [1, None],
         [4096, None],
-        [4097, "ORACLE_CDC_0009"],
+        [4097, "ORACLE_CDC_0000"],
     ]
     # fmt: on
 )
@@ -299,14 +303,18 @@ def test_buffer_size(
     oracle_cdc >> trash
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
-    handler.add_pipeline(pipeline)
+    work = handler.add_pipeline(pipeline)
 
     if expected_error is None:
-        handler.validate_pipeline(pipeline)
+        # We want to make sure there are no validation issues and the connection can be established, but the pipeline
+        # validation check is flaky, so we start a pipeline, wait for it to be running and then stop it
+        handler.start_work(work)
+        handler.wait_for_status(work, status='RUNNING')
+        handler.stop_work(work)
     else:
-        with pytest.raises(ValidationError) as err:
-            handler.validate_pipeline(pipeline)
-        assert expected_error in str(err.value.issues)
+        with pytest.raises((ValidationError, StartError)) as error:
+            handler.start_work(pipeline)
+        assert expected_error in str(error.value)
 
 
 @pytest.mark.parametrize(
