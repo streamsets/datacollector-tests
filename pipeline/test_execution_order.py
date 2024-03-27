@@ -69,11 +69,13 @@ def test_execution_order(sdc_builder, sdc_executor, with_delay):
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert wiretap_1.output_records[0].field['f1'] == '1'
-    assert wiretap_2.output_records[0].field['f1'] == '2'
+    wiretap_1_output_records = wiretap_1.output_records
+    wiretap_2_output_records = wiretap_2.output_records
+    assert wiretap_1_output_records[0].field['f1'] == '1'
+    assert wiretap_2_output_records[0].field['f1'] == '2'
 
-    assert str(wiretap_1.output_records[0].field['time']) < \
-           str(wiretap_2.output_records[0].field['time'])
+    assert str(wiretap_1_output_records[0].field['time']) < \
+           str(wiretap_2_output_records[0].field['time'])
 
 
 @sdc_min_version('5.6.0')
@@ -156,33 +158,55 @@ def test_execution_order_multiple_lines(sdc_builder, sdc_executor, with_crossing
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert wiretap_1.output_records[0].field['f1'] == '1'
-    assert wiretap_2.output_records[0].field['f1'] == '2'
-    assert wiretap_3.output_records[0].field['f1'] == '3'
-    assert wiretap_4.output_records[0].field['f1'] == '4'
 
-    f1_1 = wiretap_1.output_records[0].field['f1']
-    f1_2 = wiretap_2.output_records[0].field['f1']
-    f1_3 = wiretap_3.output_records[0].field['f1']
-    f1_4 = wiretap_4.output_records[0].field['f1']
+    wiretap_1_output_records = wiretap_1.output_records
+    wiretap_2_output_records = wiretap_2.output_records
+    wiretap_3_output_records = wiretap_3.output_records
+    wiretap_4_output_records = wiretap_4.output_records
 
-    time_1 = wiretap_1.output_records[0].field['time']
-    time_2 = wiretap_2.output_records[0].field['time']
-    time_3 = wiretap_3.output_records[0].field['time']
-    time_4 = wiretap_4.output_records[0].field['time']
+    if with_crossing:
+        # Two records are generated and the order is not warranted
+        assert ((wiretap_1_output_records[0].field['f1'] == '1'
+                and wiretap_2_output_records[1].field['f1'] == '2') or
+                (wiretap_1_output_records[0].field['f1'] == '2'
+                 and wiretap_2_output_records[1].field['f1'] == '1'))
+        assert ((wiretap_3_output_records[0].field['f1'] == '3'
+                and wiretap_4_output_records[1].field['f1'] == '4') or
+                (wiretap_3_output_records[0].field['f1'] == '4'
+                 and wiretap_4_output_records[1].field['f1'] == '3'))
+    else:
+        # One record is generated and the order is not warranted
+        assert ((wiretap_1_output_records[0].field['f1'] == '1'
+                 and wiretap_2_output_records[0].field['f1'] == '2') or
+                (wiretap_1_output_records[0].field['f1'] == '2'
+                 and wiretap_2_output_records[0].field['f1'] == '1'))
+        assert ((wiretap_3_output_records[0].field['f1'] == '3'
+                 and wiretap_4_output_records[0].field['f1'] == '4') or
+                (wiretap_3_output_records[0].field['f1'] == '4'
+                 and wiretap_4_output_records[0].field['f1'] == '3'))
 
-    assert str(wiretap_1.output_records[0].field['time']) < \
-           str(wiretap_3.output_records[0].field['time'],
-               f'Comparing w1 & w3 failed: {f1_1} - {f1_3} :: {time_1} - {time_3}')
-    assert str(wiretap_2.output_records[0].field['time']) < \
-           str(wiretap_3.output_records[0].field['time'],
-               f'Comparing w2 & w3 failed: {f1_2} - {f1_3} :: {time_2} - {time_3}')
-    assert str(wiretap_1.output_records[0].field['time']) < \
-           str(wiretap_4.output_records[0].field['time'],
-               f'Comparing w1 & w4 failed: {f1_1} - {f1_4} :: {time_1} - {time_4}')
-    assert str(wiretap_2.output_records[0].field['time']) < \
-           str(wiretap_4.output_records[0].field['time'],
-               f'Comparing w2 & w4 failed: {f1_2} - {f1_4} :: {time_2} - {time_4}')
+    f1_1 = wiretap_1_output_records[0].field['f1']
+    f1_2 = wiretap_2_output_records[0].field['f1']
+    f1_3 = wiretap_3_output_records[0].field['f1']
+    f1_4 = wiretap_4_output_records[0].field['f1']
+
+    time_1 = wiretap_1_output_records[0].field['time']
+    time_2 = wiretap_2_output_records[0].field['time']
+    time_3 = wiretap_3_output_records[0].field['time']
+    time_4 = wiretap_4_output_records[0].field['time']
+
+    assert str(wiretap_1_output_records[0].field['time']) < \
+           str(wiretap_3_output_records[0].field['time']), \
+               f'Comparing w1 & w3 failed: {f1_1} - {f1_3} :: {time_1} - {time_3}'
+    assert str(wiretap_2_output_records[0].field['time']) < \
+           str(wiretap_3_output_records[0].field['time']), \
+               f'Comparing w2 & w3 failed: {f1_2} - {f1_3} :: {time_2} - {time_3}'
+    assert str(wiretap_1_output_records[0].field['time']) < \
+           str(wiretap_4_output_records[0].field['time']), \
+               f'Comparing w1 & w4 failed: {f1_1} - {f1_4} :: {time_1} - {time_4}'
+    assert str(wiretap_2_output_records[0].field['time']) < \
+           str(wiretap_4_output_records[0].field['time']), \
+               f'Comparing w2 & w4 failed: {f1_2} - {f1_4} :: {time_2} - {time_4}'
 
 
 @sdc_min_version('5.6.0')
