@@ -21,13 +21,13 @@ import pytest
 from streamsets.testframework.markers import sdc_min_version, websocket
 
 logger = logging.getLogger(__name__)
+pytestmark = [websocket, sdc_min_version('5.10.0')]
 
-input_data = [{'name': 'Roger Federer', 'country': 'Switzerland'},
+INPUT_DATA = [{'name': 'Roger Federer', 'country': 'Switzerland'},
               {'name': 'Rafa Nadal', 'country': 'Spain'},
               {'name': 'Pete Sampras', 'country': 'USA'}]
 
 
-@sdc_min_version("5.10.0")
 @pytest.mark.parametrize('use_proxy', [True, False])
 def test_websocket_client_origin_proxy_support(sdc_builder, sdc_executor, use_proxy):
     """
@@ -49,7 +49,7 @@ def test_websocket_client_origin_proxy_support(sdc_builder, sdc_executor, use_pr
     pipeline_builder = sdc_builder.get_pipeline_builder()
     websocket_client = pipeline_builder.add_stage('WebSocket Client', type='origin').set_attributes(
         headers=[{'key': 'X-SDC-APPLICATION-ID', 'value': 'APPLICATION_ID'}],
-        request_data='\n'.join(json.dumps(rec) for rec in input_data),
+        request_data='\n'.join(json.dumps(rec) for rec in INPUT_DATA),
         data_format='JSON',
         use_proxy=use_proxy
     )
@@ -101,7 +101,7 @@ def test_websocket_client_origin_proxy_support(sdc_builder, sdc_executor, use_pr
 
         output_data = [{'name': rec.field['name'].value, 'country': rec.field['country'].value}
                        for rec in wiretap.output_records]
-        assert sorted(input_data, key=lambda x: x['name']) == sorted(output_data, key=lambda x: x['name']), \
+        assert sorted(INPUT_DATA, key=lambda x: x['name']) == sorted(output_data, key=lambda x: x['name']), \
             'Mismatch between input and output records'
     finally:
         # Stop the pipeline and verify pipeline's status
@@ -109,8 +109,6 @@ def test_websocket_client_origin_proxy_support(sdc_builder, sdc_executor, use_pr
         sdc_executor.stop_pipeline(pipeline=client_pipeline, force=True)
 
 
-@websocket
-@sdc_min_version("5.10.0")
 @pytest.mark.parametrize('proxy_requires_credentials', [True, False])
 def test_proxy_credentials(sdc_builder, sdc_executor, websocket, proxy_requires_credentials):
     """
@@ -129,7 +127,7 @@ def test_proxy_credentials(sdc_builder, sdc_executor, websocket, proxy_requires_
 
     websocket_client = pipeline_builder.add_stage('WebSocket Client', type='origin').set_attributes(
         resource_url=websocket.uri,
-        request_data=json.dumps(input_data[0]),
+        request_data='\n'.join(json.dumps(rec) for rec in INPUT_DATA),
         data_format='JSON',
         send_raw_response=True,
         use_proxy=True,
@@ -148,18 +146,112 @@ def test_proxy_credentials(sdc_builder, sdc_executor, websocket, proxy_requires_
 
     # Start WebSocket Client pipeline.
     logger.info("Starting websocket client origin pipeline..")
+    if proxy_requires_credentials:
+        try:
+            sdc_executor.start_pipeline(client_pipeline)
+            sdc_executor.wait_for_pipeline_metric(client_pipeline, "input_record_count", 3)
+            result = wiretap.output_records
+            output_records = [{k: v for k, v in record.field.items()} for record in result]
+
+            assert len(result) == 3, 'Expected exactly 3 output records'
+            assert output_records == INPUT_DATA
+        finally:
+            sdc_executor.stop_pipeline(client_pipeline, force=True)
+    else:
+        try:
+            sdc_executor.start_pipeline(client_pipeline)
+            pytest.fail("Test should not reach here. It should have failed with StartError.")
+        except Exception as e:
+            assert "WEB_SOCKET_01" in e.message
+
+
+def test_proxy_invalid_credentials(sdc_builder, sdc_executor, websocket):
+    """
+    The test is trying to connect to the WebSocket Client Origin Stage, but it displays and error as a consequence that
+    the credentials are invalid.
+
+    The pipelines look like this:
+
+    Websocket Client Origin
+        websocket_client >> wiretap
+    """
+
+    # Invalid credentials, invalid proxy username and password.
+    proxy_username = 'Mistborn:TheFinalEmpire'
+    proxy_password = 'Kelsier'
+
+    # Client pipeline creation
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    websocket_client = pipeline_builder.add_stage('WebSocket Client', type='origin').set_attributes(
+        resource_url=websocket.uri,
+        request_data=json.dumps(INPUT_DATA),
+        data_format='JSON',
+        send_raw_response=True,
+        use_proxy=True,
+        proxy_hostname=websocket.proxy_hostname,
+        proxy_port=websocket.proxy_port,
+        proxy_requires_credentials=True,
+        proxy_username=proxy_username,
+        proxy_password=proxy_password,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    websocket_client >> wiretap.destination
+
+    client_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(client_pipeline)
+
+    # Start WebSocket Client pipeline.
+    logger.info("Starting websocket client origin pipeline..")
     try:
         sdc_executor.start_pipeline(client_pipeline)
-        # We wait three seconds - One for sending request data and then some buffer time
-        sleep(3)
-    finally:
-        sdc_executor.stop_pipeline(pipeline=client_pipeline, force=True)
+        pytest.fail("Test should not reach here. It should have failed with StartError.")
+    except Exception as e:
+        assert "WEB_SOCKET_01" in e.message
 
-    result = wiretap.output_records
-    if proxy_requires_credentials:
-        output_records = [{k: v for k, v in record.field.items()} for record in result]
 
-        assert len(result) == 2, 'Expected exactly 2 output records'
-        assert output_records[0] == {'name': 'Roger Federer', 'country': 'Switzerland'}
-    else:
-        assert len(result) == 0, 'Expected exactly 0 output record'
+def test_proxy_invalid_hostname_and_port(sdc_builder, sdc_executor, websocket):
+    """
+    The test is trying to connect to the WebSocket Client Origin Stage, but it displays and error as a consequence that
+    the hostname and the port are invalid.
+
+    The pipelines look like this:
+
+    Websocket Client Origin
+        websocket_client >> wiretap
+    """
+
+    # Invalid proxy hostname and port.
+    proxy_hostname = 'houseRenoux'
+    proxy_port = 1995
+
+    # Client pipeline creation
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    websocket_client = pipeline_builder.add_stage('WebSocket Client', type='origin').set_attributes(
+        resource_url=websocket.uri,
+        request_data=json.dumps(INPUT_DATA),
+        data_format='JSON',
+        send_raw_response=True,
+        use_proxy=True,
+        proxy_hostname=proxy_hostname,
+        proxy_port=proxy_port,
+        proxy_requires_credentials=True,
+        proxy_username=websocket.proxy_username,
+        proxy_password=websocket.proxy_password,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    websocket_client >> wiretap.destination
+
+    client_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(client_pipeline)
+
+    # Start WebSocket Client pipeline.
+    logger.info("Starting websocket client origin pipeline..")
+    try:
+        sdc_executor.start_pipeline(client_pipeline)
+        pytest.fail("Test should not reach here. It should have failed with StartError.")
+    except Exception as e:
+        assert "WEB_SOCKET_01" in e.message
