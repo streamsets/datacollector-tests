@@ -24,7 +24,7 @@ from streamsets.testframework.markers import sdc_min_version, sdc_min_version, w
 from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.exceptions import RunError
 
-from stage.utils.webclient import deps, free_port, server, Endpoint, LIBRARY, RELEASE_VERSION, WEB_CLIENT
+from stage.utils.webclient import deps, free_port, server, Endpoint, LIBRARY, RELEASE_VERSION, WEB_CLIENT, verify_header
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 
@@ -630,7 +630,7 @@ def test_no_more_data_event_on_pagination_none(sdc_builder, sdc_executor, cleanu
         library="streamsets-datacollector-webclient-impl-okhttp-lib",
         request_endpoint=url,
         max_batch_size_in_records=1,
-        batch_wait_time_in_ms=10,
+        batch_wait_time_in_ms=10000,
         ingestion_mode="Batch",
         pagination_mode="None",
     )
@@ -654,3 +654,146 @@ def test_no_more_data_event_on_pagination_none(sdc_builder, sdc_executor, cleanu
     assert "John Doe" == output_records[0].field.get("employee_name")
     assert 320800 == output_records[0].field.get("employee_salary")
     assert 41 == output_records[0].field.get("employee_age")
+
+
+def test_common_header(sdc_builder, sdc_executor, cleanup, server, test_name):
+    """
+    Verify common headers are included in the request.
+    """
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    success_message = 'Success! headers are present'
+
+    endpoint = Endpoint(verify_header, ["GET"], 'verify-header')
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        common_headers=[
+            {
+                "commonHeaderName": "header1",
+                "commonHeaderValue": "some_value1"
+            },
+            {
+                "commonHeaderName": "header2",
+                "commonHeaderValue": "some_value2"
+            }
+        ]
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    output_records = wiretap.output_records
+    assert success_message == output_records[0].field
+
+
+def test_security_header(sdc_builder, sdc_executor, cleanup, server, test_name):
+    """
+    Verify security headers are included in the request.
+    """
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    success_message = 'Success! headers are present'
+
+    endpoint = Endpoint(verify_header, ["GET"], 'verify-header')
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        security_headers=[
+            {
+                "securityHeaderName": "header1",
+                "securityHeaderValue": "some_value1"
+            },
+            {
+                "securityHeaderName": "header2",
+                "securityHeaderValue": "some_value2"
+            }
+        ]
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    output_records = wiretap.output_records
+    assert success_message == output_records[0].field
+
+
+def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, test_name):
+    """
+    Verify security headers are included in the request.
+    """
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    success_message = 'Success! headers are present'
+
+    endpoint = Endpoint(verify_header, ["GET"], 'verify-header')
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        security_headers=[
+            {
+                "securityHeaderName": "header1",
+                "securityHeaderValue": "some_value1"
+            }
+        ],
+        common_headers=[
+            {
+                "commonHeaderName": "header2",
+                "commonHeaderValue": "some_value2"
+            }
+        ]
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    output_records = wiretap.output_records
+    assert success_message == output_records[0].field

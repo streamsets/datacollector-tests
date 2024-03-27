@@ -162,3 +162,25 @@ class Server:
 def server(free_port: int, deps) -> Server:  # x, deps ensures Flask is installed
     """TODO"""
     return Server("0.0.0.0", free_port)
+
+
+def verify_header():
+    """
+    Util Method - Verify Header used in tests for WebClient Origin, Processor and Destination
+    """
+
+    from flask import request, json
+
+    success_message = 'Success! headers are present'
+    failure_message = 'Missing header "header1"'
+    failure_message2 = 'Missing header "header2"'
+
+    # Check if the 'header1' header is present in the request
+    if 'header1' not in request.headers:
+        return json.dumps(failure_message)
+    # Check if the 'header2' header is present in the request
+    if 'header2' not in request.headers:
+        return json.dumps(failure_message2)
+
+    # If 'header1' and 'header2' header are present, return success response
+    return json.dumps(success_message)
