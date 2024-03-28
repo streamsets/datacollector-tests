@@ -638,15 +638,23 @@ def test_multiline_query(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('3.17.0')
 @sap_hana
-@pytest.mark.parametrize('offset_column, old_error_code, new_error_code', 
-                         [('T.P_ID', 'JDBC_32 -', 'JDBC_INIT_12 -'), 
-                          ('NONEXISTINGCOLUMN', 'JDBC_29 -', 'JDBC_29 -')])
-def test_invalid_offset_column(sdc_builder, sdc_executor, database, offset_column, old_error_code, new_error_code):
+@pytest.mark.parametrize('offset_column, old_error_code, new_error_code, changed_version',
+                         [('T.P_ID', 'JDBC_32 -', 'JDBC_INIT_12 -', '5.8.0'),
+                          ('NONEXISTINGCOLUMN', 'JDBC_29 -', 'JDBC_INIT_47 -', '5.9.0')])
+def test_invalid_offset_column(
+        sdc_builder,
+        sdc_executor,
+        database,
+        offset_column,
+        old_error_code,
+        new_error_code,
+        changed_version
+):
     """
         Tests the validation raises an error when the query does not contain
         a valid offset column config.
     """
-    expected_error = old_error_code if Version(sdc_executor.version) < Version('5.8.0') else new_error_code
+    expected_error = old_error_code if Version(sdc_executor.version) < Version(changed_version) else new_error_code
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     connection = database.engine.connect()
