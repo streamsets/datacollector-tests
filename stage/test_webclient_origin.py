@@ -163,6 +163,69 @@ def test_webclient_origin_response_data_format(
     assert response.text == response_data
 
 
+@pytest.mark.parametrize('grant_type', ['ClientCredentials', 'OwnerCredentials', 'AccessToken'])
+def test_webclient_origin_oauth2_authentication_scheme(sdc_builder, sdc_executor, cleanup, server, test_name,
+                                                          web_client, grant_type):
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=f'{web_client.has_base_url}/oauth2/authenticate',
+        authentication_scheme = 'OAuth2',
+        grant_type = grant_type,
+        token_endpoint=f'{web_client.has_base_url}/oauth2/server/token',
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch"
+    )
+
+    if grant_type == 'ClientCredentials':
+      webclient_origin.set_attributes(
+          client_id=web_client.oauth2.client_id,
+          client_secret=web_client.oauth2.client_secret,
+          additional_parameters=[{"additionalParameterName": "scope",
+                                  "additionalParameterValue": web_client.oauth2.scope}]
+          )
+    elif grant_type == 'OwnerCredentials':
+      webclient_origin.set_attributes(
+          owner_client_id=web_client.oauth2.client_id,
+          owner_client_secret=web_client.oauth2.client_secret,
+          owner_user=web_client.oauth2.resource_owner_username,
+          owner_password=web_client.oauth2.resource_owner_password,
+          additional_parameters=[{"additionalParameterName": "scope",
+                                  "additionalParameterValue": web_client.oauth2.scope}]
+          )
+    elif grant_type == 'AccessToken':
+      jwtHeader = web_client.oauth2.jwt.header
+      jwtPayload = web_client.oauth2.jwt.payload
+      webclient_origin.set_attributes(
+          token_claims = f'{{"iss": "{jwtPayload.iss}", '
+                         f'"sub": "{jwtPayload.sub}", '
+                         f'"aud": "{jwtPayload.aud}", '
+                         f'"exp": {jwtPayload.exp}}}' ,
+          token_headers = f'{{"alg": "{jwtHeader.alg}", '
+                          f'"typ": "{jwtHeader.typ}"}}',
+          signing_algorithm= jwtHeader.alg,
+          signing_key= web_client.oauth2.jwt.secret_key
+          )
+    wiretap = pipeline_builder.add_wiretap()
+
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+    output_records = [record.field for record in wiretap.output_records]
+    assert 'Successfully authenticated' in output_records[0]['message'].value
+
+
 @sdc_min_version(RELEASE_VERSION)
 @pytest.mark.parametrize('data_length', [-1, 2048, 256])
 def test_okhttp_webclient_origin_response_data_max_size(sdc_builder, sdc_executor, cleanup, server, test_name, data_length):
