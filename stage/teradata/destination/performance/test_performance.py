@@ -16,7 +16,7 @@ import string
 import pytest
 
 from stage.utils.common import cleanup
-from . import (
+from stage.teradata.destination import (
     pytestmark,
     stage_name,
     teradata_manager,
