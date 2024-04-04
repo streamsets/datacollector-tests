@@ -112,9 +112,10 @@ def test_action(sdc_builder, sdc_executor, stage_attributes, constant_value=None
 
 
 @pytest.mark.parametrize('stage_attributes', [{'action': 'REMOVE_CONSTANT'}])
-@pytest.mark.parametrize('constant_value, constant_value_type', {('Al Gore', 'STRING'), ('42', 'INT'), ('5.5', 'DOUBLE')})
-@sdc_min_version('3.7.0')
-def test_constant(sdc_builder, sdc_executor, stage_attributes, constant_value, constant_value_type):
+@pytest.mark.parametrize('constant_value, constant_value_type', {('42', 'INT'), ('5.5', 'DOUBLE')})
+@sdc_min_version('5.11.0')
+def test_constant_with_non_strings_values(sdc_builder, sdc_executor, stage_attributes, constant_value,
+                                          constant_value_type):
     """:py:function:`stage.configuration.test_field_remover_processor.test_action` covers this case
     as we set the remover to remove all fields, but only provide a constant that matches one."""
     test_action(sdc_builder, sdc_executor, stage_attributes, constant_value, constant_value_type)
