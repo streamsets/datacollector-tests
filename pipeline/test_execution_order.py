@@ -25,7 +25,7 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 
-@sdc_min_version('5.6.0')
+@sdc_min_version('5.11.0')
 @pytest.mark.parametrize('with_delay', [True, False])
 def test_execution_order(sdc_builder, sdc_executor, with_delay):
     """
@@ -71,14 +71,88 @@ def test_execution_order(sdc_builder, sdc_executor, with_delay):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     wiretap_1_output_records = wiretap_1.output_records
     wiretap_2_output_records = wiretap_2.output_records
-    assert wiretap_1_output_records[0].field['f1'] == '1'
-    assert wiretap_2_output_records[0].field['f1'] == '2'
+    f1_1 = wiretap_1_output_records[0].field['f1']
+    f1_2 = wiretap_2_output_records[0].field['f1']
+    assert f1_1 == '1'
+    assert f1_2 == '2'
 
-    assert str(wiretap_1_output_records[0].field['time']) < \
-           str(wiretap_2_output_records[0].field['time'])
+    time_1 = wiretap_1_output_records[0].field['time']
+    time_2 = wiretap_2_output_records[0].field['time']
+    assert time_1 < time_2, f'Comparing w1 & w2 failed: {f1_1} - {f1_2} :: {time_1} - {time_2}'
 
 
-@sdc_min_version('5.6.0')
+@sdc_min_version('5.11.0')
+@pytest.mark.parametrize('with_delay', [True, False])
+def test_execution_order_file_system(sdc_builder, sdc_executor, with_delay, keep_data):
+    """
+    Test execution order with and without a delay stage
+       The pipeline looks like:
+       dev_raw_data_source >> delay >> expe_eval >> wiretap
+       dev_raw_data_source >= expe_eval >= wiretap
+       Second line should be executed later
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{"f1": "abc", "time": ""}',
+                                       event_data='{"f1": "abc", "time": ""}',
+                                       stop_after_first_batch=True)
+
+    expression_evaluator_1 = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator_1.field_expressions = [{'fieldToSet': '/f1', 'expression': '1'},
+                                                {'fieldToSet': '/time',
+                                                 'expression': '${time:nowNanoTimestampString()}'}]
+
+    expression_evaluator_2 = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator_2.field_expressions = [{'fieldToSet': '/f1', 'expression': '2'},
+                                                {'fieldToSet': '/time',
+                                                 'expression': '${time:nowNanoTimestampString()}'}]
+
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    local_fs_1 = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs_1.set_attributes(data_format='JSON', directory_template=tmp_directory,
+                              files_prefix='sdc1-', max_records_in_file=100)
+
+    local_fs_2 = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs_2.set_attributes(data_format='JSON', directory_template=tmp_directory,
+                              files_prefix='sdc2-', max_records_in_file=100)
+
+    if with_delay:
+        delay = pipeline_builder.add_stage('Delay').set_attributes(delay_between_batches=10000,
+                                                                   on_record_error='DISCARD')
+        dev_raw_data_source >> delay >> expression_evaluator_1 >> local_fs_1
+    else:
+        dev_raw_data_source >> expression_evaluator_1 >> local_fs_1
+
+    dev_raw_data_source >= expression_evaluator_2
+    expression_evaluator_2 >> local_fs_2
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    try:
+        shell_result_1 = sdc_executor.execute_shell(f'cat {tmp_directory}/sdc1-*')
+        shell_result_2 = sdc_executor.execute_shell(f'cat {tmp_directory}/sdc2-*')
+
+        record_1 = json.loads(shell_result_1.stdout)
+        record_2 = json.loads(shell_result_2.stdout)
+        f1_1 = record_1['f1']
+        f1_2 = record_2['f1']
+        time_1 = record_1['time']
+        time_2 = record_2['time']
+        assert f1_1 == '1'
+        assert f1_2 == '2'
+        assert time_1 < time_2, \
+            f'Comparing fs1 & fs2 failed: {f1_1} - {f1_2} :: {time_1} - {time_2}'
+
+    finally:
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -r {tmp_directory}')
+
+
+@sdc_min_version('5.11.0')
 @pytest.mark.parametrize('with_crossing', [True, False])
 def test_execution_order_multiple_lines(sdc_builder, sdc_executor, with_crossing):
     """
@@ -195,21 +269,17 @@ def test_execution_order_multiple_lines(sdc_builder, sdc_executor, with_crossing
     time_3 = wiretap_3_output_records[0].field['time']
     time_4 = wiretap_4_output_records[0].field['time']
 
-    assert str(wiretap_1_output_records[0].field['time']) < \
-           str(wiretap_3_output_records[0].field['time']), \
+    assert wiretap_1_output_records[0].field['time'] < wiretap_3_output_records[0].field['time'], \
                f'Comparing w1 & w3 failed: {f1_1} - {f1_3} :: {time_1} - {time_3}'
-    assert str(wiretap_2_output_records[0].field['time']) < \
-           str(wiretap_3_output_records[0].field['time']), \
+    assert wiretap_2_output_records[0].field['time'] < wiretap_3_output_records[0].field['time'], \
                f'Comparing w2 & w3 failed: {f1_2} - {f1_3} :: {time_2} - {time_3}'
-    assert str(wiretap_1_output_records[0].field['time']) < \
-           str(wiretap_4_output_records[0].field['time']), \
+    assert wiretap_1_output_records[0].field['time'] < wiretap_4_output_records[0].field['time'], \
                f'Comparing w1 & w4 failed: {f1_1} - {f1_4} :: {time_1} - {time_4}'
-    assert str(wiretap_2_output_records[0].field['time']) < \
-           str(wiretap_4_output_records[0].field['time']), \
+    assert wiretap_2_output_records[0].field['time'] < wiretap_4_output_records[0].field['time'], \
                f'Comparing w2 & w4 failed: {f1_2} - {f1_4} :: {time_2} - {time_4}'
 
 
-@sdc_min_version('5.6.0')
+@sdc_min_version('5.11.0')
 def test_execution_order_crossing_target_multiplex(sdc_builder, sdc_executor, keep_data):
     """
     Test records multiplexion
