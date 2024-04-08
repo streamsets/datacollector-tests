@@ -534,16 +534,88 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
         output_records = [record.field for record in wiretap.output_records]
         assert len(output_records) == 1
         # Check that the null record did generate an error record
-        assert 1 == len(wiretap.error_records)
+        output_errors = wiretap.error_records
+        assert len(output_errors) == 1
 
-        error_record = wiretap.error_records[0]
-        assert expected_error_message == error_record.header['errorMessage']
+        error_record = output_errors[0]
+        assert error_record.header['errorMessage'] == expected_error_message
         assert 'abc' in str(error_record)  # 'abc' is the key set in the message, making it as messageKey
 
         if contains_header:
-            assert kafka_multitopic_consumer.topic_list[0] == error_record.header.values['topic']
-            assert '1' == error_record.header.values['offset']
-            assert '0' == error_record.header.values['partition']
+            assert error_record.header.values['topic'] == kafka_multitopic_consumer.topic_list[0]
+            assert error_record.header.values['offset'] == '1'
+            assert error_record.header.values['partition'] == '0'
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@sdc_min_version('5.11.0')
+@cluster('cdh', 'kafka')
+def test_kafka_multiconsumer_null_message_key(sdc_builder, sdc_executor, cluster):
+    """Check that retrieving a message with null message key and null payload does not throw and unexpected
+    NullPointerException (NPE). It creates an error record instead.
+
+    Kafka Multitopic Consumer Origin pipeline with standalone mode:
+        kafka_multitopic_consumer >> wiretap.destination
+    """
+    message = json.dumps({'abc': '123'})
+    expected_error_message = 'KAFKA_79 - Tombstone message: payload and message key are null'
+
+    contains_header = cluster.sdc_stage_libs not in KAFKA_LIBRARIES_THAT_DONT_SUPPORT_HEADERS
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
+    kafka_multitopic_consumer.set_attributes(data_format='JSON')
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_multitopic_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    brokers = ','.join(cluster.kafka.brokers)
+    topic = kafka_multitopic_consumer.topic_list[0]
+    logger.debug(f"topic: {topic}")
+
+    # Add messages
+    #
+    # 1. The first one with null message key and null payload
+    # It has to be done from the shell with a kafkacat command (can't be done with kafka-python)
+    # 1.1. Force to install 'kafkacat' if not installed
+    kafkacat_install_command = 'apt-get install kafkacat -y'
+    install_response = execute_shell_command(sdc_executor, kafkacat_install_command)
+    # Checking there were no issues with the installation
+    assert 'kafkacat' not in install_response.stderr.rstrip(), f"Issues when running '{kafkacat_install_command}'"
+    # 1.2. Produce the new message
+    kafkacat_produce_command = f'echo ":" | kafkacat -b {brokers} -t {topic} -P -Z -K:'
+    produce_response = execute_shell_command(sdc_executor, kafkacat_produce_command)
+    # Check the message with null payload and null message key was sent successfully
+    assert produce_response.stdout.rstrip() == '' and produce_response.stderr.rstrip() == '', \
+        f"Issues when running '{kafkacat_produce_command}'"
+
+    # 2. The second one has a proper message key and payload
+    producer = cluster.kafka.producer()
+    producer.send(topic, message.encode())
+    producer.flush()
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Check the output records, there should be only 1 message, since the null should be discarded
+        output_records = wiretap.output_records
+        assert len(output_records) == 1
+        # Check that the null record did generate an error record
+        output_errors = wiretap.error_records
+        assert len(output_errors) == 1
+
+        error_record = output_errors[0]
+        assert error_record.header['errorMessage'] == expected_error_message
+
+        if contains_header:
+            assert error_record.header.values['topic'] == topic
+            assert error_record.header.values['offset'] == '0'
+            assert error_record.header.values['partition'] == '0'
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
@@ -710,3 +782,9 @@ def produce_kafka_messages_list(topic, cluster, message_list, data_format):
             producer.send(topic, message.encode())
 
     producer.flush()
+
+
+def execute_shell_command(sdc_executor, command):
+    response = sdc_executor.execute_shell(command)
+    logger.debug(f"Output after executing '{command}' shell command: %s", response)
+    return response
