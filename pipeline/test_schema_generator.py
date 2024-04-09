@@ -115,3 +115,59 @@ def test_schema_generator_types(sdc_builder, input, converter_type, expected_val
     assert len(records) == 1
     assert records[0].field['value'] == expected_value
 
+
+@pytest.mark.parametrize('default_to_null,expected_schema', [
+    (
+        True,  
+        {
+            "type":"record",
+            "name":"test_schema",
+            "doc":"",
+            "fields":[
+                {"name":"source","type":["null","string"],"default":None},
+                {"name":"reconDataList","type":["null", {"type":"array", "items": [ "null", {"type":"map","values":["null", "string"]}]}], "default":None}]
+        }
+    ),
+    (
+        False,  
+        {
+            "type":"record",
+            "name":"test_schema",
+            "doc":"",
+            "fields":[
+                {"name":"source","type":["null","string"]},
+                {"name":"reconDataList","type":["null", {"type":"array", "items": [ "null", {"type":"map","values":["null", "string"]}]}]}]
+        }
+    ),
+
+])
+def test_default_to_nullable(sdc_builder, sdc_executor, default_to_null, expected_schema):
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.raw_data = json.dumps({
+        "source":"BARRACUDA",
+        "reconDataList":[
+            {"topic":"T_BENCHMARK_FIXING","count":"27","timeColumn":"all_data"},
+        ]})
+    origin.stop_after_first_batch = True
+
+    # Generate schema for that record
+    schema_generator = builder.add_stage('Schema Generator')
+    schema_generator.schema_name = 'test_schema'
+    schema_generator.nullable_fields = True
+    schema_generator.default_to_nullable = default_to_null
+
+    # Finish building the pipeline
+    wiretap = builder.add_wiretap()
+    origin >> schema_generator >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    records = wiretap.output_records
+    assert len(records) == 1
+    generated_avro_schema = records[0].header.values["avroSchema"]
+    assert json.loads(generated_avro_schema) == expected_schema
