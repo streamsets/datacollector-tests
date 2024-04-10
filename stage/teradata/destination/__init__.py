@@ -48,6 +48,22 @@ ALL_STAGING_FILE_FORMATS = ['CSV', 'PARQUET']
 
 CREATE_TABLE_DDL_TEMPLATE = 'CREATE MULTISET TABLE %s.%s ( %s )'
 
+# Cleans up leftover teradata sessions older than X minutes
+# The teradata user used must have EXECUTE grant in SYSLIB to execute this
+CLEAN_UP_SESSIONS_OLDER_THAN = '''
+    SELECT SYSLIB.AbortSessions (HostId, UserName, SessionNo, 'Y', 'Y')
+    FROM TABLE (MonitorSession(-1, '*', 0)) AS T2
+    WHERE LogonTime < (CURRENT_TIMESTAMP - INTERVAL '%s' %s) AND UserName = '%s';
+'''
+INTERVAL, UNIT = 30, 'MINUTE'
+# Counts the Teradata sessions. Usually, we will have a hard limit of 120 sessions, and test
+# will fail if the limit is reached.
+COUNT_TERADATA_SESSIONS = '''
+    SELECT count(*) FROM TABLE(MonitorSession(-1, '*', 0)) AS T2;
+'''
+MAX_TERADATA_SESSIONS = 120
+WARN_TERADATA_SESSIONS = 100
+
 CSV_EXTERNAL_SUPPORTED_DATA_TYPES = [
     'BYTE', 'VARBYTE(25500)', 'BLOB(16776192)',
     'CHARACTER', 'VARCHAR(255)', 'CLOB(16776192)',
@@ -270,9 +286,23 @@ class TeradataConnectionManager:
         self.teradata = teradata
         self.staging_location = staging_location
         self.cleanup = cleanup
+        self.cleanup_sessions()
 
     def execute_query(self, query: str):
         return self.teradata.engine.execute(query)
+
+    def cleanup_sessions(self):
+        rs = self.execute_query(CLEAN_UP_SESSIONS_OLDER_THAN % (INTERVAL, UNIT, self.teradata.username))
+        logger.info(f'Cleaned up {rs.rowcount} Teradata sessions older than {INTERVAL} {UNIT}')
+        rs = self.execute_query(COUNT_TERADATA_SESSIONS)
+        sessions_count = rs.fetchall()[0][0]
+        if sessions_count == MAX_TERADATA_SESSIONS:
+            # wait or retry could be implemented here, if needed
+            pytest.fail(f'Current Teradata sessions count is {sessions_count}. Test cannot be run.')
+        elif sessions_count > WARN_TERADATA_SESSIONS:
+            logger.warning(f'Current Teradata sessions count is {sessions_count}. Test might fail.')
+        else:
+            logger.info(f'Current Teradata sessions count is {sessions_count}.')
 
     def create_table(self, table: Table = None) -> Table:
         """Creates a Teradata table and returns it. If there is no Table passed, a default table is created."""
