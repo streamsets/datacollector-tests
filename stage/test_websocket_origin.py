@@ -14,14 +14,25 @@
 
 import json
 import logging
-from time import sleep
 
 import pytest
 
 from streamsets.testframework.markers import sdc_min_version, websocket
 
+
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.sdc_properties['parser.limit'] = '10485760'
+
+    return hook
+
+
 logger = logging.getLogger(__name__)
 pytestmark = [websocket, sdc_min_version('5.10.0')]
+
+MIN_ALLOWED_MESSAGE_SIZE = 1024
+MAX_ALLOWED_MESSAGE_SIZE = 10485760
 
 INPUT_DATA = [{'name': 'Roger Federer', 'country': 'Switzerland'},
               {'name': 'Rafa Nadal', 'country': 'Spain'},
@@ -255,3 +266,59 @@ def test_proxy_invalid_hostname_and_port(sdc_builder, sdc_executor, websocket):
         pytest.fail("Test should not reach here. It should have failed with StartError.")
     except Exception as e:
         assert "WEB_SOCKET_01" in e.message
+
+
+@sdc_min_version("5.11.0")
+@pytest.mark.parametrize("max_message_size", [1023, 3145727, 3145728, 10485761])
+def test_max_message_size(sdc_builder, sdc_executor, websocket, max_message_size):
+    """
+    The test tries to receive large message from websocket server and handle it based on the maximum message size
+    configured in the websocket client config.
+
+    The pipelines look like this:
+
+    Websocket Client Origin
+        websocket_client >> wiretap
+    """
+
+    # Client pipeline creation
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    message_size = 3145728
+    data = {'message_size': message_size}
+
+    websocket_client = pipeline_builder.add_stage('WebSocket Client', type='origin').set_attributes(
+        resource_url=websocket.uri,
+        request_data=json.dumps(data),
+        max_message_size_in_bytes=max_message_size,
+        data_format='TEXT',
+        max_line_length=message_size,
+        use_proxy=False,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    websocket_client >> wiretap.destination
+
+    client_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(client_pipeline)
+
+    # Start WebSocket Client pipeline.
+    logger.info("Starting websocket client origin pipeline..")
+    try:
+        sdc_executor.start_pipeline(client_pipeline)
+        sdc_executor.wait_for_pipeline_metric(client_pipeline, "input_record_count", 1, timeout_sec=15)
+        result = wiretap.output_records
+        assert len(result) == 1, 'Expected exactly 1 output record'
+        assert len(result[0].field['text'].value) == message_size
+    except Exception as e:
+        if max_message_size < MIN_ALLOWED_MESSAGE_SIZE or max_message_size > MAX_ALLOWED_MESSAGE_SIZE:
+            assert e.issues['issueCount'] == 1
+            assert 'VALIDATION_003' in e.issues['stageIssues']["WebSocketClient_01"][0]['message']
+        else:
+            stage_errors = sdc_executor.get_stage_errors(client_pipeline, websocket_client)
+            assert len(stage_errors) == 1
+            assert stage_errors[0].error_code == 'WEB_SOCKET_06'
+    finally:
+        status = sdc_executor.get_pipeline_status(client_pipeline).response.json().get('status')
+        if status == 'RUNNING':
+            sdc_executor.stop_pipeline(client_pipeline, force=True)
