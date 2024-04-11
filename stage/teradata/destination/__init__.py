@@ -64,6 +64,8 @@ COUNT_TERADATA_SESSIONS = '''
 '''
 MAX_TERADATA_SESSIONS = 120
 WARN_TERADATA_SESSIONS = 100
+TERADATA_MAX_SESSIONS_RETRY = 3
+TERADATA_MAX_SESSIONS_RETRY_INTERVAL_SEC = 60
 
 CSV_EXTERNAL_SUPPORTED_DATA_TYPES = [
     'BYTE', 'VARBYTE(25500)', 'BLOB(16776192)',
@@ -292,13 +294,13 @@ class TeradataConnectionManager:
     def execute_query(self, query: str):
         return self.teradata.engine.execute(query)
 
-    def cleanup_sessions(self, retries: int = 3, interval: int = 60):
+    def cleanup_sessions(self, retries: int = TERADATA_MAX_SESSIONS_RETRY,
+                         interval: int = TERADATA_MAX_SESSIONS_RETRY_INTERVAL_SEC):
         rs = self.execute_query(CLEAN_UP_SESSIONS_OLDER_THAN % (INTERVAL, UNIT, self.teradata.username))
         logger.info(f'Cleaned up {rs.rowcount} Teradata sessions older than {INTERVAL} {UNIT}')
         rs = self.execute_query(COUNT_TERADATA_SESSIONS)
         sessions_count = rs.fetchall()[0][0]
         if sessions_count == MAX_TERADATA_SESSIONS:
-            # wait or retry could be implemented here, if needed
             if retries > 0:
                 time.sleep(interval)
                 self.cleanup(retries=retries - 1)

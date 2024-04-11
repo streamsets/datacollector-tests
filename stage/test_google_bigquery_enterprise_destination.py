@@ -1151,9 +1151,8 @@ def test_basic_values_as_null(sdc_builder, sdc_executor, gcp, null_value):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@pytest.mark.parametrize('null_value, expected', [('', ''), (None, None), ('\\N', None), ('test', 'test')])
-@sdc_min_version('5.8.0')
-def test_null_values_for_json_file_format(sdc_builder, sdc_executor, gcp, null_value, expected):
+@sdc_min_version('5.11.0')
+def test_null_values_for_json_file_format(sdc_builder, sdc_executor, gcp):
     """
     Test for Google BigQuery with Google Cloud Storage staging with JSON file format for null values.
 
@@ -1183,7 +1182,6 @@ def test_null_values_for_json_file_format(sdc_builder, sdc_executor, gcp, null_v
                             create_table=True,
                             create_dataset=True,
                             purge_stage_file_after_ingesting=True,
-                            null_value=null_value,
                             staging_file_format='JSON')
 
     dev_raw_data_source >> bigquery
@@ -1206,7 +1204,7 @@ def test_null_values_for_json_file_format(sdc_builder, sdc_executor, gcp, null_v
         data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
         data_from_bigquery.sort()
 
-        expected_data = [tuple(expected if None == v else v for v in d.values()) for d in ROWS_IN_DATABASE_NULL_VALUE]
+        expected_data = [tuple(v for v in d.values()) for d in ROWS_IN_DATABASE_NULL_VALUE]
 
         assert len(data_from_bigquery) == len(expected_data)
         assert data_from_bigquery == expected_data
@@ -1216,7 +1214,6 @@ def test_null_values_for_json_file_format(sdc_builder, sdc_executor, gcp, null_v
         sdc_executor.remove_pipeline(pipeline)
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
-
 
 
 @pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])

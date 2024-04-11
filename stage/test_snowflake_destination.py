@@ -48,6 +48,12 @@ ROWS_IN_DATABASE = [
     {'id': 3, 'name': 'Dominic Thiem'}
 ]
 
+NULL_ROWS_IN_DATABASE = [
+    {'id': 1, 'name': None},
+    {'id': 2, 'name': 'Rafael Nadal'},
+    {'id': 3, 'name': 'Dominic Thiem'}
+]
+
 ROWS_IN_DATABASE_WITH_ERROR = [
     {'id': 1, 'name': 'Roger Federer'},
     {'id': 2, 'name': 'Rafael Nadal'},
@@ -2858,6 +2864,125 @@ def test_datadrift_decimal_types(sdc_builder, sdc_executor, snowflake, replicate
         engine.dispose()
 
 
+@sdc_min_version('5.11.0')
+@pytest.mark.parametrize('null_value', ['\\N', '', 'NULL'])
+def test_csv_null_value(sdc_builder, sdc_executor, snowflake, null_value):
+    """Test for Snowflake destination target stage when for Null Value property. Data is inserted into
+    Snowflake with different configurations for this property.
+    '\\N' and '' are taken as null by default. But other options will treat them as the string. To make them
+    null, we should pait this property with the null_if property.
+    Although we should NOT use this property to set random values to null, it can happen.
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source  >> snowflake_destination
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    table = snowflake.create_table(table_name.lower())
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    if null_value in ('\\N', ''):
+        expected_data = [(row['name'], row['id']) for row in NULL_ROWS_IN_DATABASE]
+    else:
+        expected_data = [(null_value if row['name'] is None else row['name'], row['id'])
+                         for row in NULL_ROWS_IN_DATABASE]
+
+    raw_data = '\n'.join(json.dumps(row) for row in NULL_ROWS_IN_DATABASE)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         defaults_from_snowflake_file_format=False,
+                                         null_value=null_value)
+
+    dev_raw_data_source >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert expected_data == data_from_database
+    finally:
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()
+
+
+@sdc_min_version('5.11.0')
+@pytest.mark.parametrize('staging_file_format', ['CSV', 'JSON', 'PARQUET'])
+def test_null_values(sdc_builder, sdc_executor, snowflake, staging_file_format):
+    """Test for Snowflake destination target stage when for Null Value property. Data is inserted into
+    Snowflake with different configurations for this property.
+    '\\N' and '' are taken as null by default. But other options will treat them as the string. To make them
+    null, we should pait this property with the null_if property.
+    Although we should NOT use this property to set random values to null, it can happen.
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source  >> snowflake_destination
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    table = snowflake.create_table(table_name.lower())
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    raw_data = '\n'.join(json.dumps(row) for row in NULL_ROWS_IN_DATABASE)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         staging_file_format=staging_file_format,
+                                         table=table_name)
+
+    dev_raw_data_source >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert data_from_database == [(row['name'], row['id']) for row in NULL_ROWS_IN_DATABASE]
+    finally:
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()
+
+
 @snowflake
 @sdc_min_version('3.7.0')
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
@@ -2908,6 +3033,7 @@ def test_values_representing_null(sdc_builder, sdc_executor, snowflake, values_r
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
+                                         defaults_from_snowflake_file_format=False,
                                          values_representing_null=values_representing_null)
 
     dev_raw_data_source >> snowflake_destination
