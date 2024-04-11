@@ -15,6 +15,7 @@
 import logging
 import string
 import datetime
+import time
 
 import pytest
 from abc import ABC, abstractmethod
@@ -55,7 +56,7 @@ CLEAN_UP_SESSIONS_OLDER_THAN = '''
     FROM TABLE (MonitorSession(-1, '*', 0)) AS T2
     WHERE LogonTime < (CURRENT_TIMESTAMP - INTERVAL '%s' %s) AND UserName = '%s';
 '''
-INTERVAL, UNIT = 30, 'MINUTE'
+INTERVAL, UNIT = 20, 'MINUTE'
 # Counts the Teradata sessions. Usually, we will have a hard limit of 120 sessions, and test
 # will fail if the limit is reached.
 COUNT_TERADATA_SESSIONS = '''
@@ -291,13 +292,16 @@ class TeradataConnectionManager:
     def execute_query(self, query: str):
         return self.teradata.engine.execute(query)
 
-    def cleanup_sessions(self):
+    def cleanup_sessions(self, retries: int = 3, interval: int = 60):
         rs = self.execute_query(CLEAN_UP_SESSIONS_OLDER_THAN % (INTERVAL, UNIT, self.teradata.username))
         logger.info(f'Cleaned up {rs.rowcount} Teradata sessions older than {INTERVAL} {UNIT}')
         rs = self.execute_query(COUNT_TERADATA_SESSIONS)
         sessions_count = rs.fetchall()[0][0]
         if sessions_count == MAX_TERADATA_SESSIONS:
             # wait or retry could be implemented here, if needed
+            if retries > 0:
+                time.sleep(interval)
+                self.cleanup(retries=retries - 1)
             pytest.fail(f'Current Teradata sessions count is {sessions_count}. Test cannot be run.')
         elif sessions_count > WARN_TERADATA_SESSIONS:
             logger.warning(f'Current Teradata sessions count is {sessions_count}. Test might fail.')
