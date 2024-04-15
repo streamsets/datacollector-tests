@@ -840,6 +840,126 @@ def test_multithreading_multiple_batches(
         dl_fs.rmdir(directory_name, recursive=True)
 
 
+@sdc_min_version('5.11.0')
+def test_data_lake_large_parquet_file(sdc_builder, sdc_executor, azure):
+    # This tests checks that big Parquet files can be correctly read from Azure. For the test we need a file with a few MBs,
+    # 50k records with 12 double fields each amount to a file of about 5MB which is enough for the test.
+    directory_name = get_random_string(string.ascii_letters, 10)
+    dl_fs = azure.datalake.file_system
+
+    builder = sdc_builder.get_pipeline_builder()
+    # Use multiple threads to create the files in the Azure container to try to get files with the same timestamp
+    num_writing_threads = 10
+    num_records = 50000
+    dev_data_generator = builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(
+        fields_to_generate=[{'field': 'id', 'type': 'LONG_SEQUENCE'},
+                            {'field': 'double1', 'type': 'DOUBLE'},
+                            {'field': 'double2', 'type': 'DOUBLE'},
+                            {'field': 'double3', 'type': 'DOUBLE'},
+                            {'field': 'double4', 'type': 'DOUBLE'},
+                            {'field': 'double5', 'type': 'DOUBLE'},
+                            {'field': 'double6', 'type': 'DOUBLE'},
+                            {'field': 'double7', 'type': 'DOUBLE'},
+                            {'field': 'double8', 'type': 'DOUBLE'},
+                            {'field': 'double9', 'type': 'DOUBLE'},
+                            {'field': 'double10', 'type': 'DOUBLE'},
+                            {'field': 'double11', 'type': 'DOUBLE'},
+                            {'field': 'double12', 'type': 'DOUBLE'}
+                            ],
+        batch_size=num_records,
+        records_to_be_generated=num_records,
+        number_of_threads=num_writing_threads
+    )
+
+    azure_data_lake_destination = builder.add_stage(name=TARGET_STAGE_NAME)
+    azure_data_lake_destination.set_attributes(data_format='PARQUET',
+                                               directory_template=f'/{directory_name}',
+                                               max_records_in_file=num_records)
+
+    creation_wiretap = builder.add_wiretap()
+
+    dev_data_generator >> [azure_data_lake_destination, creation_wiretap.destination]
+
+    azure_dest_pipeline = builder.build(
+        title='Multi-threaded Writing Pipeline - Azure destination').configure_for_environment(azure)
+    sdc_executor.add_pipeline(azure_dest_pipeline)
+
+    builder = sdc_builder.get_pipeline_builder()
+    read_wiretap = builder.add_wiretap()
+    azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
+    azure_data_lake_origin.set_attributes(data_format='PARQUET',
+                                          common_path=f'/{directory_name}')
+
+    azure_data_lake_origin >> read_wiretap.destination
+
+    azure_origin_pipeline = builder.build().configure_for_environment(azure)
+    sdc_executor.add_pipeline(azure_origin_pipeline)
+
+
+
+    try:
+        logger.info("Creating Azure destination directory: %s", directory_name)
+        dl_fs.mkdir(directory_name)
+
+        logger.info("Executing the pipeline that creates a large file in Azure...")
+        sdc_executor.start_pipeline(azure_dest_pipeline).wait_for_finished(timeout_sec=300)
+
+        logger.info("Executing the pipeline that reads the file from the Azure container ...")
+        sdc_executor.start_pipeline(azure_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(azure_origin_pipeline, 'input_record_count', num_records, timeout_sec=300)
+        sdc_executor.stop_pipeline(azure_origin_pipeline)
+
+        num_records_read = len(read_wiretap.output_records)
+        assert num_records_read == num_records, \
+            f'{num_records} should have been read from the Azure container, but only {num_records_read} were read'
+
+        records_created = [{'id': record.field['id'],
+                            'double1': record.field['double1'],
+                            'double2': record.field['double2'],
+                            'double3': record.field['double3'],
+                            'double4': record.field['double4'],
+                            'double5': record.field['double5'],
+                            'double6': record.field['double6'],
+                            'double7': record.field['double7'],
+                            'double8': record.field['double8'],
+                            'double9': record.field['double9'],
+                            'double10': record.field['double10'],
+                            'double11': record.field['double11'],
+                            'double12': record.field['double12']}
+                           for record in creation_wiretap.output_records]
+        records_read = [{'id' : record.field['id'],
+                         'double1': record.field['double1'],
+                         'double2': record.field['double2'],
+                         'double3': record.field['double3'],
+                         'double4': record.field['double4'],
+                         'double5': record.field['double5'],
+                         'double6': record.field['double6'],
+                         'double7': record.field['double7'],
+                         'double8': record.field['double8'],
+                         'double9': record.field['double9'],
+                         'double10': record.field['double10'],
+                         'double11': record.field['double11'],
+                         'double12': record.field['double12']}
+                         for record in read_wiretap.output_records]
+
+        created_set = {tuple(sorted(record.items())) for record in records_created}
+        read_set = {tuple(sorted(record.items())) for record in records_read}
+
+        assert created_set == read_set
+
+    finally:
+        logger.info("Deleting directory %s ...", directory_name)
+        try:
+            dl_fs.rmdir(directory_name, recursive=True)
+            logger.info("Directory deleted successfully")
+        except FileNotFoundError:
+            logger.info("Directory does not exist")
+        except Exception as e:
+            logger.info("An error occurred when deleting the directory:", e)
+
+
+
 def _adls_create_file(adls_client, file_content, file_path):
     """Create a file in ADLS with the specified content.  If the file already exist, overrite content with
     `file_content`.
