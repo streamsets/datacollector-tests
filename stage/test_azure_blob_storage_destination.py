@@ -19,6 +19,7 @@ import re
 
 import pytest
 from streamsets.sdk.exceptions import RunError
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -202,7 +203,8 @@ def test_overwrite(sdc_builder, sdc_executor, azure, overwrite):
         if not overwrite:
             with pytest.raises(RunError) as error:
                 sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            assert "ADLS_13" in error.value.message, f'Expected a ADLS_13 error, got "{error.value.message}" instead'
+            error_code = 'ADLS_13' if Version(sdc_executor.version) < Version('5.11.0') else 'AZURE_CLIENT_13'
+            assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()

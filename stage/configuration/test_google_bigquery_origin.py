@@ -17,6 +17,7 @@ from string import ascii_letters
 import os
 import tempfile
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import gcp
 from streamsets.testframework.utils import get_random_string
@@ -161,4 +162,5 @@ def test_credentials_file_path_in_json_not_found(sdc_builder, sdc_executor, gcp)
         assert False, 'Should not reach here.'
 
     except Exception as error:
-        assert 'GOOGLE_01' in error.message
+        error_code = 'GOOGLE_01' if Version(sdc_executor.version) < Version('5.11.0') else 'GCP_CREDENTIALS_01'
+        assert error_code in error.message

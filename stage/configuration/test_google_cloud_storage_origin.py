@@ -15,6 +15,8 @@ import pytest
 import logging
 
 from string import ascii_letters, ascii_lowercase
+
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.decorators import stub
@@ -277,7 +279,8 @@ def test_credentials_file_path_in_json_not_found(sdc_builder, sdc_executor, gcp)
         assert False, 'Should not reach here.'
 
     except Exception as error:
-        assert 'GOOGLE_01' in error.message
+        error_code = 'GOOGLE_01' if Version(sdc_executor.version) < Version('5.11.0') else 'GCP_CREDENTIALS_01'
+        assert error_code in error.message
 
 
 
@@ -313,7 +316,8 @@ def test_credentials_file_path_with_invalid_json(sdc_builder, sdc_executor, gcp)
         assert False, 'Should not reach here.'
 
     except Exception as error:
-        assert 'GOOGLE_02' in error.message
+        error_code = 'GOOGLE_02' if Version(sdc_executor.version) < Version('5.11.0') else 'GCP_CREDENTIALS_02'
+        assert error_code in error.message
 
     finally:
         sdc_executor.execute_shell(f'rm -rf {credentials_file_path}')
