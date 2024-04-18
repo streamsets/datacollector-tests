@@ -466,3 +466,4 @@ def test_empty_folder(sdc_builder, sdc_executor, azure):
     finally:
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         fs.rmdir(directory_name, recursive=True)
+

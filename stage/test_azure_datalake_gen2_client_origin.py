@@ -969,3 +969,64 @@ def _adls_create_file(adls_client, file_content, file_path):
     res2 = adls_client.write(file_path, file_content)
     if not (res1.response.ok and res2.response.ok):
         raise RuntimeError(f'Could not create file: {file_path}')
+
+
+@sdc_min_version('5.11.0')
+def test_data_format_whole_file_with_post_processing_delete(sdc_builder, sdc_executor, azure):
+    """
+    This test tries to answer a problem that's coming from an intervention.The test uses a DataLakeStorageGen2DSource
+    as the source and a LocalFS. The source sends a WHOLE_FILE to the destination and then
+    uses post-processing to post-process the file, in this specific case DELETE.
+
+    The pipeline looks like:
+        azure_data_lake_origin >> local_fs
+    """
+    archive_dir = 'stf_error_handling_{}'.format(get_random_string(string.ascii_letters, 10))
+    directory_name_source = get_random_string(string.ascii_letters, 10)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    object_name = get_random_string(string.ascii_letters, 10)
+
+    fs = azure.datalake.file_system
+    data = [get_random_string(string.ascii_letters, 100) for _ in range(10)]
+    fs.mkdir(directory_name_source)
+    fs.mkdir(archive_dir)
+    fs.touch(f'{directory_name_source}/{object_name}')
+    fs.write(f'{directory_name_source}/{object_name}', '\n'.join(msg for msg in data))
+
+    directory_name_local_fs = get_random_string(string.ascii_letters, 10)
+
+    azure_data_lake_origin = pipeline_builder.add_stage(name=STAGE_NAME)
+    azure_data_lake_origin.set_attributes(data_format='WHOLE_FILE',
+                                          common_path=f'/{directory_name_source}',
+                                          post_processing_option='DELETE',
+                                          error_handling_option='ARCHIVE',
+                                          error_path=f'/{archive_dir}')
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(
+        data_format='WHOLE_FILE',
+        file_type='WHOLE_FILE',
+        directory_template=f'/tmp/{directory_name_local_fs}',
+        file_name_expression=object_name
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    azure_data_lake_origin >> local_fs >= wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(azure)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = wiretap.output_records
+        assert len(output_records) == 1
+        assert object_name in output_records[0].field['sourceFileInfo']['file'].value
+
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name_source)
+        fs.rmdir(directory_name_source, recursive=True)
+        logger.info(f'Deleting the folder {directory_name_local_fs} and its contents...')
+        sdc_executor.execute_shell(f'rm -R {directory_name_local_fs}')
