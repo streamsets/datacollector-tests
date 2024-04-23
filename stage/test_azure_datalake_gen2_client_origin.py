@@ -845,11 +845,11 @@ def test_data_lake_large_parquet_file(sdc_builder, sdc_executor, azure):
     # This tests checks that big Parquet files can be correctly read from Azure. For the test we need a file with a few MBs,
     # 50k records with 12 double fields each amount to a file of about 5MB which is enough for the test.
     directory_name = get_random_string(string.ascii_letters, 10)
+    files_prefix = get_random_string(string.ascii_letters, 10)
     dl_fs = azure.datalake.file_system
 
     builder = sdc_builder.get_pipeline_builder()
     # Use multiple threads to create the files in the Azure container to try to get files with the same timestamp
-    num_writing_threads = 10
     num_records = 50000
     dev_data_generator = builder.add_stage('Dev Data Generator')
     dev_data_generator.set_attributes(
@@ -869,12 +869,12 @@ def test_data_lake_large_parquet_file(sdc_builder, sdc_executor, azure):
                             ],
         batch_size=num_records,
         records_to_be_generated=num_records,
-        number_of_threads=num_writing_threads
     )
 
     azure_data_lake_destination = builder.add_stage(name=TARGET_STAGE_NAME)
     azure_data_lake_destination.set_attributes(data_format='PARQUET',
                                                directory_template=f'/{directory_name}',
+                                               files_prefix=files_prefix,
                                                max_records_in_file=num_records)
 
     creation_wiretap = builder.add_wiretap()
@@ -882,7 +882,7 @@ def test_data_lake_large_parquet_file(sdc_builder, sdc_executor, azure):
     dev_data_generator >> [azure_data_lake_destination, creation_wiretap.destination]
 
     azure_dest_pipeline = builder.build(
-        title='Multi-threaded Writing Pipeline - Azure destination').configure_for_environment(azure)
+        title='Writing Pipeline - Azure destination').configure_for_environment(azure)
     sdc_executor.add_pipeline(azure_dest_pipeline)
 
     builder = sdc_builder.get_pipeline_builder()
@@ -904,6 +904,10 @@ def test_data_lake_large_parquet_file(sdc_builder, sdc_executor, azure):
 
         logger.info("Executing the pipeline that creates a large file in Azure...")
         sdc_executor.start_pipeline(azure_dest_pipeline).wait_for_finished(timeout_sec=300)
+
+        logger.info("Enforcing consistency...")
+        if not _wait_for_consistency(dl_fs, directory_name, files_prefix):
+            raise Exception('File not consistent after 60s')
 
         logger.info("Executing the pipeline that reads the file from the Azure container ...")
         sdc_executor.start_pipeline(azure_origin_pipeline)
@@ -958,6 +962,29 @@ def test_data_lake_large_parquet_file(sdc_builder, sdc_executor, azure):
         except Exception as e:
             logger.info("An error occurred when deleting the directory:", e)
 
+
+def _check_file_exists(fs, directory, pattern):
+    try:
+        listing_result = fs.ls(directory)
+        response = listing_result.response
+        listing = response.json()['paths']
+        for file_name in listing:
+            file_name = file_name['name'] # Get the file name, which includes the directory
+            file_name = file_name.split('/', 1)[-1] # Remove the directory
+            if file_name.startswith(f'{pattern}'): # Make sure the file is fully written, otherwise the name starts with "_tmp_"
+                return True
+        return False
+    except FileNotFoundError:
+        return False
+
+
+def _wait_for_consistency(fs, directory, pattern, timeout=60, interval=1):
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if _check_file_exists(fs, directory, pattern):
+            return True
+        time.sleep(interval)
+    return False
 
 
 def _adls_create_file(adls_client, file_content, file_path):
