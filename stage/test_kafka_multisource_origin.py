@@ -541,7 +541,7 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
         assert error_record.header['errorMessage'] == expected_error_message
         assert 'abc' in str(error_record)  # 'abc' is the key set in the message, making it as messageKey
 
-        if contains_header:
+        if contains_header and Version(sdc_builder.version) >= Version('5.10.0'):
             assert error_record.header.values['topic'] == kafka_multitopic_consumer.topic_list[0]
             assert error_record.header.values['offset'] == '1'
             assert error_record.header.values['partition'] == '0'
