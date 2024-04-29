@@ -3,7 +3,6 @@
 import logging
 import string
 
-import pytest
 import sqlalchemy
 from streamsets.testframework.markers import database, sdc_min_version, sdc_enterprise_lib_min_version
 from streamsets.testframework.utils import get_random_string
@@ -11,154 +10,6 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 
 SRC_TABLE_PREFIX = 'ORATST'
-
-
-@database('oracle')
-@sdc_min_version('5.6.0')
-@pytest.mark.skip('This tests is skipped since the offset has been disabled in the code')
-def test_oracle_consumer_start_stop(sdc_builder, sdc_executor, database):
-    """ Insert records in Oracle database table using sqlalchemy.
-    Then Oracle Origin is used to retrieve records from that table.
-    We start and stop the pipeline to verify we write records to another table using JDBC_Producer in order to verify
-    that all the records were read.
-
-    The pipeline looks like this:
-        oracle_consumer >> wiretap.destination
-    """
-
-    # Table name has as prefix ORATST. Column names in uppercase.
-    table_name = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
-    # Oracle consumer tables set up to table_name.
-    oracle_consumer = pipeline_builder.add_stage('Oracle Bulkload')
-
-    oracle_consumer.set_attributes(max_batch_size=50,
-                                   stop_for_sql_exception=True,
-                                   tables=[dict(schemaName='', tableName=table_name)])
-
-    wiretap = pipeline_builder.add_wiretap()
-    oracle_consumer >> wiretap.destination
-
-    pipeline = pipeline_builder.build().configure_for_environment(database)
-
-    # Configure and create table for Database.
-    table = _create_table(database, table_name, 'ID', 'NAME')
-
-    data = [dict(ID=i, NAME=get_random_string()) for i in range(1000, 6000)]
-    try:
-        logger.info('Adding rows into oracle ...')
-        connection = database.engine.connect()
-        connection.execute(table.insert(), data)
-
-        sdc_executor.add_pipeline(pipeline)
-
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(5)
-        sdc_executor.stop_pipeline(pipeline)
-
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-        records = wiretap.output_records
-
-        assert len(data) == len(records)
-
-        keys = list(data[0].keys())
-        for record in records:
-            # The data starts at ID=1000, so the index will be ID-1000
-            origin_record = data[int(record.field.get('ID').value)-1000]
-            for key in keys[1:]:
-                assert record.field.get(key) == origin_record.get(key)
-
-    finally:
-        # Tables are deleted.
-        logger.info(f'Dropping table {table_name} in oracle...')
-        table.drop(database.engine)
-
-
-@database('oracle')
-@sdc_min_version('5.6.0')
-@pytest.mark.skip('This tests is skipped since the offset has been disabled in the code')
-def test_oracle_consumer_start_stop_multiple_blocks(sdc_builder, sdc_executor, database):
-    """ Insert records in Oracle database table using sqlalchemy.
-    Then Oracle Origin is used to retrieve records from that table.
-
-    We are inserting big volumes of data in multiple operations to force Oracle to create multiple blocks in disk.
-
-    The pipeline looks like this:
-        oracle_consumer >> wiretap.destination
-    """
-
-    # Table name has as prefix ORATST. Column names in uppercase.
-    table_name1 = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
-    table_name2 = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
-    # Oracle consumer tables set up to table_name.
-    oracle_consumer = pipeline_builder.add_stage('Oracle Bulkload')
-
-    oracle_consumer.set_attributes(maximum_pool_size=4,
-                                   tables=[dict(schemaName='', tableName=table_name1),
-                                           dict(schemaName='', tableName=table_name2)])
-
-    wiretap = pipeline_builder.add_wiretap()
-    oracle_consumer >> wiretap.destination
-
-    pipeline = pipeline_builder.build().configure_for_environment(database)
-
-    # Configure and creates tables in database.
-    table1 = _create_table(database, table_name1, 'ID', 'NAME')
-    table2 = _create_table(database, table_name2, 'ID', 'NAME')
-
-    data1 = [dict(ID=i, NAME=get_random_string()) for i in range(10000, 20000)]
-    data2 = [dict(ID=i, NAME=get_random_string()) for i in range(20000, 30000)]
-    data3 = [dict(ID=i, NAME=get_random_string()) for i in range(30000, 40000)]
-    data4 = [dict(ID=i, NAME=get_random_string()) for i in range(40000, 50000)]
-    data5 = [dict(ID=i, NAME=get_random_string()) for i in range(50000, 60000)]
-    data6 = [dict(ID=i, NAME=get_random_string()) for i in range(60000, 70000)]
-    data7 = [dict(ID=i, NAME=get_random_string()) for i in range(70000, 80000)]
-    data8 = [dict(ID=i, NAME=get_random_string()) for i in range(80000, 90000)]
-
-    try:
-        logger.info(f'Adding rows into {database.type} database ...')
-        connection = database.engine.connect()
-        connection.execute(table1.insert(), data1)
-        connection.execute(table2.insert(), data2)
-
-        connection.execute(table1.insert(), data3)
-        connection.execute(table2.insert(), data4)
-
-        connection.execute(table1.insert(), data5)
-        connection.execute(table2.insert(), data6)
-
-        connection.execute(table1.insert(), data7)
-        connection.execute(table2.insert(), data8)
-
-        sdc_executor.add_pipeline(pipeline)
-
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(8)
-        sdc_executor.stop_pipeline(pipeline)
-
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-        records = wiretap.output_records
-        records = sorted(records, key=lambda x: x.field["ID"].value)
-
-        raw_data = data1 + data2 + data3 + data4 + data5 + data6 + data7 + data8
-        assert len(raw_data) == len(records)
-
-        for i in range(len(records)):
-            record = records[i].field
-            for key in raw_data[i]:
-                assert record.get(key) == raw_data[i].get(key)
-
-    finally:
-        # Tables are dropped.
-        logger.info(f'Dropping table {table_name1} in oracle...')
-        table1.drop(database.engine)
-        logger.info(f'Dropping table {table_name2} in oracle...')
-        table2.drop(database.engine)
 
 
 @database('oracle')
@@ -176,15 +27,22 @@ def test_oracle_consumer_multiple_blocks(sdc_builder, sdc_executor, database):
     # Table name has as prefix ORATST. Column names in uppercase.
     table_name1 = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
     table_name2 = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
+    table_name3 = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
+    table_name4 = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
+    table_name5 = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Oracle consumer tables set up to table_name.
     oracle_consumer = pipeline_builder.add_stage('Oracle Bulkload')
 
-    oracle_consumer.set_attributes(maximum_pool_size=4,
+    oracle_consumer.set_attributes(maximum_pool_size=10,
                                    tables=[dict(schemaName='', tableName=table_name1),
-                                           dict(schemaName='', tableName=table_name2)])
+                                           dict(schemaName='', tableName=table_name2),
+                                           dict(schemaName='', tableName=table_name3),
+                                           dict(schemaName='', tableName=table_name4),
+                                           dict(schemaName='', tableName=table_name5),
+                                           ])
 
     wiretap = pipeline_builder.add_wiretap()
     oracle_consumer >> wiretap.destination
@@ -194,6 +52,9 @@ def test_oracle_consumer_multiple_blocks(sdc_builder, sdc_executor, database):
     # Configure and creates tables in database.
     table1 = _create_table(database, table_name1, 'ID', 'NAME')
     table2 = _create_table(database, table_name2, 'ID', 'NAME')
+    table3 = _create_table(database, table_name3, 'ID', 'NAME')
+    table4 = _create_table(database, table_name4, 'ID', 'NAME')
+    table5 = _create_table(database, table_name5, 'ID', 'NAME')
 
     data1 = [dict(ID=i, NAME=get_random_string()) for i in range(10000, 20000)]
     data2 = [dict(ID=i, NAME=get_random_string()) for i in range(20000, 30000)]
@@ -203,30 +64,54 @@ def test_oracle_consumer_multiple_blocks(sdc_builder, sdc_executor, database):
     data6 = [dict(ID=i, NAME=get_random_string()) for i in range(60000, 70000)]
     data7 = [dict(ID=i, NAME=get_random_string()) for i in range(70000, 80000)]
     data8 = [dict(ID=i, NAME=get_random_string()) for i in range(80000, 90000)]
+    data9 = [dict(ID=i, NAME=get_random_string()) for i in range(90000, 100000)]
+    data10 = [dict(ID=i, NAME=get_random_string()) for i in range(100000, 110000)]
+    data11 = [dict(ID=i, NAME=get_random_string()) for i in range(110000, 120000)]
+    data12 = [dict(ID=i, NAME=get_random_string()) for i in range(120000, 130000)]
+    data13 = [dict(ID=i, NAME=get_random_string()) for i in range(130000, 140000)]
+    data14 = [dict(ID=i, NAME=get_random_string()) for i in range(140000, 150000)]
+    data15 = [dict(ID=i, NAME=get_random_string()) for i in range(150000, 160000)]
+    data16 = [dict(ID=i, NAME=get_random_string()) for i in range(160000, 170000)]
+    data17 = [dict(ID=i, NAME=get_random_string()) for i in range(170000, 180000)]
+    data18 = [dict(ID=i, NAME=get_random_string()) for i in range(180000, 190000)]
+    data19 = [dict(ID=i, NAME=get_random_string()) for i in range(190000, 200000)]
+    data20 = [dict(ID=i, NAME=get_random_string()) for i in range(200000, 210000)]
 
     try:
         logger.info('Adding rows into oracle ...')
         connection = database.engine.connect()
         connection.execute(table1.insert(), data1)
         connection.execute(table2.insert(), data2)
+        connection.execute(table3.insert(), data3)
+        connection.execute(table4.insert(), data4)
+        connection.execute(table5.insert(), data5)
 
-        connection.execute(table1.insert(), data3)
-        connection.execute(table2.insert(), data4)
+        connection.execute(table1.insert(), data6)
+        connection.execute(table2.insert(), data7)
+        connection.execute(table3.insert(), data8)
+        connection.execute(table4.insert(), data9)
+        connection.execute(table5.insert(), data10)
 
-        connection.execute(table1.insert(), data5)
-        connection.execute(table2.insert(), data6)
+        connection.execute(table1.insert(), data11)
+        connection.execute(table2.insert(), data12)
+        connection.execute(table3.insert(), data13)
+        connection.execute(table4.insert(), data14)
+        connection.execute(table5.insert(), data15)
 
-        connection.execute(table1.insert(), data7)
-        connection.execute(table2.insert(), data8)
+        connection.execute(table1.insert(), data16)
+        connection.execute(table2.insert(), data17)
+        connection.execute(table3.insert(), data18)
+        connection.execute(table4.insert(), data19)
+        connection.execute(table5.insert(), data20)
 
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=3000)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=30000)
 
         records = wiretap.output_records
         records = sorted(records, key=lambda x: x.field["ID"].value)
 
-        raw_data = data1 + data2 + data3 + data4 + data5 + data6 + data7 + data8
+        raw_data = data1 + data2 + data3 + data4 + data5 + data6 + data7 + data8 + data9 + data10 + data11 + data12 + data13 + data14 + data15 + data16 + data17 + data18 + data19 + data20
         assert len(raw_data) == len(records)
 
         for i in range(len(records)):
@@ -240,6 +125,12 @@ def test_oracle_consumer_multiple_blocks(sdc_builder, sdc_executor, database):
         table1.drop(database.engine)
         logger.info(f'Dropping table {table_name2} in oracle...')
         table2.drop(database.engine)
+        logger.info(f'Dropping table {table_name3} in oracle...')
+        table3.drop(database.engine)
+        logger.info(f'Dropping table {table_name4} in oracle...')
+        table4.drop(database.engine)
+        logger.info(f'Dropping table {table_name5} in oracle...')
+        table5.drop(database.engine)
 
 
 @database('oracle')
@@ -301,7 +192,7 @@ def test_oracle_consumer_wide_table(sdc_builder, sdc_executor, database):
         keys = list(data[0].keys())
         for record in records:
             # The data starts at ID=1000, so the index will be ID-1000
-            origin_record = data[int(record.field.get('ID').value)-1000]
+            origin_record = data[int(record.field.get('ID').value) - 1000]
             for key in keys[1:]:
                 assert record.field.get(key) == origin_record.get(key)
 

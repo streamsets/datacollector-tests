@@ -508,7 +508,7 @@ def test_oracle_consumer_table_finished_event(sdc_builder, sdc_executor, databas
 
     try:
         # Insert data in both tables.
-        logger.info(f'Adding rows into oracle ...')
+        logger.info('Adding rows into oracle...')
         connection = database.engine.connect()
         connection.execute(table1.insert(), ROWS_IN_DATABASE)
         connection.execute(table2.insert(), ROWS_IN_DATABASE2)
