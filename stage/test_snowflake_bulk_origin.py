@@ -313,7 +313,7 @@ def test_exclusion_pattern(sdc_builder, sdc_executor, snowflake, number_of_table
         for record in records:
             assert excluded_tables_mark not in record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME], \
                 f'The table {record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME]} should have been excluded'
-    except StartError as e:
+    except (StartError, StartingError) as e:
         if number_of_tables == number_of_excluded_tables:
             response = sdc_executor.get_pipeline_status(pipeline).response.json()
             status = response.get('status')
