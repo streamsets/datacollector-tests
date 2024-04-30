@@ -2152,6 +2152,8 @@ def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor,
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
+        # Directory origin has a file processing delay, so we must wait for a while before running the pipeline
+        time.sleep(10)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         file_output = os.path.join(files_directory, 'myfileoutput*')
