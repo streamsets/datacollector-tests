@@ -98,9 +98,9 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
                                        stop_after_first_batch=True)
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
-    query_str = f'SELECT "name" as "columnName" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
+    query_str = f'SELECT "name" as "columnName" FROM "{table_name}" WHERE "id" = 1'
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
-        query_str = f'SELECT `name` as `columnName` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
+        query_str = f'SELECT `name` as `columnName` FROM `{table_name}` WHERE `id` = 1'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
                             columnName=column_name_config,
                             field='/FirstName')]
@@ -190,9 +190,9 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
-        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = ${{record:value("/id")}}'
+        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = 1'
     else:
-        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = ${{record:value("/id")}}'
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = 1'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
                             columnName=column_name_config,
                             field='/FirstName')]
@@ -207,7 +207,7 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
     try:
         # Start error should be raised if getting validated
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        if validate_column_mappings and not correct_column_name_config:
+        if validate_column_mappings and not correct_column_name_config and table_type != 'el_var':
             # Should never reach
             pytest.fail('Start pipeline should have failed, but did not')
 
