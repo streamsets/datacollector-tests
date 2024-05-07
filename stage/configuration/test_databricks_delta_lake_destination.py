@@ -851,17 +851,24 @@ def _start_pipeline_and_check_discard(sdc_executor, pipeline, wiretap):
 
 
 @aws('s3')
-@pytest.mark.parametrize("on_record_error, start_and_check",
-                         [("STOP_PIPELINE", _start_pipeline_and_check_stopped),
-                          ("TO_ERROR", _start_pipeline_and_check_to_error),
-                          ("DISCARD", _start_pipeline_and_check_discard)])
+@pytest.mark.parametrize("on_record_error",
+                         ["STOP_PIPELINE", "TO_ERROR", "DISCARD"]
+)
 def test_on_record_error(sdc_builder, sdc_executor, deltalake, aws,
-                         on_record_error, start_and_check):
+                         on_record_error):
     """Write DB with malformed records and check pipeline behaves as set in 'on_record_error'
 
     The pipeline looks like this:
         dev_raw_data_source >> databricks_deltalake
     """
+
+    if on_record_error == 'STOP_PIPELINE':
+        start_and_check = _start_pipeline_and_check_stopped
+    elif on_record_error == 'TO_ERROR':
+        start_and_check = _start_pipeline_and_check_to_error
+    elif on_record_error == 'DISCARD':
+        start_and_check = _start_pipeline_and_check_discard
+
     table_name = f'stf_{get_random_string()}'
 
     DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE_WITH_ERROR)

@@ -46,17 +46,21 @@ def sdc_common_hook(smtp):
 @smtp
 @sdc_min_version('5.4.0')
 @pytest.mark.parametrize(
-    'email_subject',
-    [get_random_string(string.ascii_letters, 10), '']
+    'email_subject_mode',
+    ['RANDOM', 'EMPTY']
 )
 @pytest.mark.parametrize(
     'email_body',
     ['Hello World!!', None]
 )
-def test_email_executor(sdc_builder, sdc_executor, smtp, email_subject, email_body):
+def test_email_executor(sdc_builder, sdc_executor, smtp, email_subject_mode, email_body):
     """
     Tests that emails are properly sent with the Email Executor.
     """
+    if email_subject_mode == 'RANDOM':
+        email_subject = get_random_string(string.ascii_letters, 10)
+    elif email_subject_mode == 'EMPTY':
+        email_subject = ''
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')

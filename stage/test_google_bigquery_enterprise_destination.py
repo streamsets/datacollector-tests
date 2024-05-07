@@ -2284,17 +2284,23 @@ def start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
 
 
 @sdc_min_version('5.4.0')
-@pytest.mark.parametrize("on_error_record, start_and_check",
-                         [("STOP_PIPELINE", start_pipeline_and_check_stopped),
-                          ("TO_ERROR", start_pipeline_and_check_to_error)])
+@pytest.mark.parametrize("on_error_record",
+                         ["STOP_PIPELINE", "TO_ERROR"]
+)
 def test_gcp_write_records_on_error(sdc_builder, sdc_executor, gcp,
-                                    on_error_record, start_and_check):
+                                    on_error_record, position):
     """
     Write DB with malformed records and check pipeline behaves as set in 'on_record_error'
 
     The pipeline looks like this:
         dev_raw_data_source >> bigquery
     """
+
+    if on_record_error == 'STOP_PIPELINE':
+        start_and_check = start_pipeline_and_check_stopped
+    elif on_record_error == 'TO_ERROR':
+        start_and_check = start_pipeline_and_check_to_error
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'

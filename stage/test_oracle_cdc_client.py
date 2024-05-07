@@ -319,13 +319,13 @@ def test_buffer_size(
 
 @pytest.mark.parametrize(
     # fmt: off
-    "start_mode, initial_parameter, initial_parameter_function, expected_error",
+    "start_mode, initial_parameter, initial_parameter_case",
     [
-        ["CURRENT", None, None, NoError],
-        ["CHANGE", "initial_system_change_number", StartMode.current_scn, NoError],
-        ["CHANGE", "initial_system_change_number", StartMode.future_scn, StartError],
-        ["INSTANT", "initial_instant", StartMode.current_instant, NoError],
-        ["INSTANT", "initial_instant", StartMode.future_instant, StartError],
+        ["CURRENT", None, "NONE"],
+        ["CHANGE", "initial_system_change_number", "CURRENT_SCN"],
+        ["CHANGE", "initial_system_change_number", "FUTURE_SCN"],
+        ["INSTANT", "initial_instant", "CURRENT_INSTANT"],
+        ["INSTANT", "initial_instant", "FUTURE_INSTANT"],
     ],
     # fmt: on
 )
@@ -340,11 +340,21 @@ def test_start_mode(
     table_name,
     start_mode,
     initial_parameter,
-    initial_parameter_function,
-    expected_error,
+    initial_parameter_case
 ):
     """Ensure that the stage starts from the specified point in the specified mode.
     The point can be an instant or a System Change Number (SCN)."""
+
+    if initial_parameter_case == "NONE":
+        initial_parameter_function, expected_error = None, NoError
+    elif initial_parameter_case == "CURRENT_SCN":
+        initial_parameter_function, expected_error = StartMode.current_scn, NoError
+    elif initial_parameter_case == "FUTURE_SCN":
+        initial_parameter_function, expected_error = StartMode.future_scn, StartError
+    elif initial_parameter_case == "CURRENT_INSTANT":
+        initial_parameter_function, expected_error = StartMode.current_instant, NoError
+    elif initial_parameter_case == "FUTURE_INSTANT":
+        initial_parameter_function, expected_error = StartMode.future_instant, StartError
 
     if database_version < MIN_ORACLE_VERSION:
         pytest.skip(f"Oracle version {database_version} is not officially supported")

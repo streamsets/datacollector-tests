@@ -2125,10 +2125,10 @@ def test_s3_keep_offset_on_disconnect(sdc_builder, sdc_executor, aws):
         time.sleep(3)
 
         logger.info(f'Disconnecting the network...')
-        sdc_executor.container.network_disconnect()
+        sdc_executor.network_disconnect()
         time.sleep(5)
         logger.info(f'Reconnecting the network...')
-        sdc_executor.container.network_reconnect()
+        sdc_executor.network_reconnect()
 
         pipeline_cmd.wait_for_finished()
 

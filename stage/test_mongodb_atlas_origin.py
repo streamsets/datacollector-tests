@@ -799,18 +799,20 @@ def test_mongodb_atlas_origin_multiple_documents(sdc_builder, sdc_executor, mong
         mongodb.engine.drop_database(mongodb_atlas_origin.database)
 
 
-@pytest.mark.parametrize('database_value,collection_value', [
-    ('${PARAM}', get_random_string(ascii_letters, 5)),
-    (get_random_string(ascii_letters, 5), '${PARAM}')
-])
+@pytest.mark.parametrize('param_location', ['DATABASE_VALUE', 'COLLECTION_VALUE'])
 def test_mongodb_atlas_origin_database_collection_parameters(sdc_builder, sdc_executor, mongodb,
-                                                             database_value, collection_value):
+                                                             param_location):
     """
     Create 1 simple document in MongoDB Atlas with pipeline parameters in the Database and Collection name.
 
     The pipeline looks like:
         mongodb_atlas_origin >> wiretap
     """
+    if param_location == 'DATABASE_VALUE':
+        database_value, collection_value = '${PARAM}', get_random_string(ascii_letters, 5)
+    elif param_location == 'COLLECTION_VALUE':
+        database_value, collection_value = get_random_string(ascii_letters, 5), '${PARAM}'
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 

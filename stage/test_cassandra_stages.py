@@ -483,19 +483,14 @@ def test_cassandra_destination_record_with_missing_fields(
 
 @cassandra
 @pytest.mark.parametrize(
-    'on_record_error, start_and_check_pipeline_behaviour',
-    [
-        ('DISCARD', _start_pipeline_and_check_on_error_record_discard),
-        ('STOP_PIPELINE', _start_pipeline_and_check_on_error_record_stops),
-        ('TO_ERROR', _start_pipeline_and_check_on_error_record_to_error)
-    ]
+    'on_record_error',
+    ['DISCARD', 'STOP_PIPELINE', 'TO_ERROR']
 )
 def test_cassandra_destination_errors(
         sdc_builder,
         sdc_executor,
         cassandra,
-        on_record_error,
-        start_and_check_pipeline_behaviour
+        on_record_error
 ):
     """
     Check the behaviour of the Cassandra destination with all the On Record Error options.
@@ -503,6 +498,14 @@ def test_cassandra_destination_errors(
     The pipeline looks like:
     dev_raw_data_source >> cassandra_destination
     """
+
+    if on_record_error == 'DISCARD':
+        start_and_check_pipeline_behaviour = _start_pipeline_and_check_on_error_record_discard
+    elif on_record_error == 'START_PIPELINE':
+        start_and_check_pipeline_behaviour = _start_pipeline_and_check_on_error_record_stops
+    elif on_record_error == 'TO_ERROR':
+        start_and_check_pipeline_behaviour = _start_pipeline_and_check_on_error_record_to_error
+
     cassandra_keyspace = get_random_string(string.ascii_letters, 10)
 
     raw_data = [dict(contact=dict(name='Jane Smith', age='x'))]
@@ -550,21 +553,14 @@ def test_cassandra_destination_errors(
 
 @cassandra
 @pytest.mark.parametrize(
-    'cassandra_keyspace, table_name',
-    [
-        (get_random_string(string.ascii_letters, 10), DEFAULT_TABLE_NAME),
-        (get_random_string(string.ascii_letters, 10), f"{pytest.param('cassandra_keyspace')}_{DEFAULT_TABLE_NAME}"),
-        (get_random_string(string.ascii_letters, 10), f"{pytest.param('cassandra_keyspace')},{DEFAULT_TABLE_NAME}"),
-        (get_random_string(string.ascii_letters, 10), f"{pytest.param('cassandra_keyspace')}#{DEFAULT_TABLE_NAME}"),
-        (get_random_string(string.ascii_letters, 10), f"{pytest.param('cassandra_keyspace')}:{DEFAULT_TABLE_NAME}")
-    ]
+    'separator',
+    [None, '_', ',', '#', ':']
 )
 def test_cassandra_destination_malformed_table_name(
         sdc_builder,
         sdc_executor,
         cassandra,
-        cassandra_keyspace,
-        table_name
+        separator
 ):
     """
     Test that the Cassandra destination throws a StageException when the table name does not follow the pattern
@@ -573,6 +569,10 @@ def test_cassandra_destination_malformed_table_name(
     The pipeline looks like:
     dev_raw_data_source >> cassandra_destination
     """
+
+    cassandra_keyspace = get_random_string(string.ascii_letters, 10)
+    table_name = f'{cassandra_keyspace}{separator}{DEFAULT_TABLE_NAME}' if separator else DEFAULT_TABLE_NAME
+
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(
