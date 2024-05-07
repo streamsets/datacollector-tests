@@ -362,8 +362,9 @@ def test_retrieve_primary_key_constraints_from_the_records(
 
 
 @database('postgresql')
+@sdc_min_version('5.10.0')
 def test_empty_table_name(sdc_builder, sdc_executor, database, keep_data):
-    """Ensure proper error when table name parameter evaluates to a invalid name"""
+    """Ensure proper error when table name parameter evaluates to an invalid name"""
 
     table_name = "${record:value('/nonExistingField')}"
     builder = sdc_builder.get_pipeline_builder()
@@ -384,13 +385,21 @@ def test_empty_table_name(sdc_builder, sdc_executor, database, keep_data):
     pipeline = builder.build().configure_for_environment(database)
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    # The record should be sent to error with proper error code
-    errors = wiretap.error_records
-    assert len(errors) == 1
-    error_code = errors[0].header['errorCode']
-    assert error_code == 'JDBC_120', f'Expected a JDBC_120 error, got {error_code} instead'
+        # The record should be sent to error with proper error code
+        errors = wiretap.error_records
+        assert len(errors) == 1
+        error_code = errors[0].header['errorCode']
+        assert error_code == 'JDBC_120', f'Expected a JDBC_120 error, got {error_code} instead'
+    finally:
+        if not keep_data:
+            if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+                try:
+                    sdc_executor.stop_pipeline(pipeline)
+                except Exception:
+                    logger.info(f'Could not stop the pipeline')
 
 
 def _generate_dummy_records(num_records=2):
