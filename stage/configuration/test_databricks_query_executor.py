@@ -342,8 +342,12 @@ def _test_with_no_storage(sdc_builder, sdc_executor, deltalake, stage_attributes
 
     dev_raw_data_source >> databricks_deltalake
 
-    databricks_deltalake.set_attributes(spark_sql_query=[sql_query],
-                                        **stage_attributes if stage_attributes else {})
+    if Version(sdc_builder.version) >= Version('5.11.0'):
+        databricks_deltalake.sql_queries = [sql_query]
+    else:
+        databricks_deltalake.spark_sql_query = [sql_query]
+
+    databricks_deltalake.set_attributes(**stage_attributes if stage_attributes else {})
 
     pipeline = pipeline_builder.build()
     if apply_configure_for_environment:
@@ -408,8 +412,13 @@ def _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, st
                  f"{azure.datalake_store_account_fqdn}/${{record:value('/filepath')}}' "
                  "FILEFORMAT = CSV FORMAT_OPTIONS ('header' = 'true')")
     databricks_deltalake = pipeline_builder.add_stage('Databricks Query', type='executor')
-    databricks_deltalake.set_attributes(spark_sql_query=[sql_query],
-                                        **stage_attributes if stage_attributes else {})
+
+    if Version(sdc_builder.version) >= Version('5.11.0'):
+        databricks_deltalake.sql_queries = [sql_query]
+    else:
+        databricks_deltalake.spark_sql_query = [sql_query]
+
+    databricks_deltalake.set_attributes(**stage_attributes if stage_attributes else {})
 
     dev_raw_data_source >> expression_evaluator >> adls_gen2_destination >= databricks_deltalake
 
@@ -471,8 +480,13 @@ def _test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, stage_a
     sql_query = (f"COPY INTO {table_name} FROM 's3a://${{record:value('/bucket')}}/${{record:value('/objectKey')}}' "
                  "FILEFORMAT = CSV FORMAT_OPTIONS ('header' = 'true')")
     databricks_deltalake = pipeline_builder.add_stage('Databricks Query', type='executor')
-    databricks_deltalake.set_attributes(spark_sql_query=[sql_query],
-                                        include_query_result_count_in_events=True,
+
+    if Version(sdc_builder.version) >= Version('5.11.0'):
+        databricks_deltalake.sql_queries = [sql_query]
+    else:
+        databricks_deltalake.spark_sql_query = [sql_query]
+
+    databricks_deltalake.set_attributes(include_query_result_count_in_events=True,
                                         **stage_attributes if stage_attributes else {})
 
     dev_raw_data_source >> expression_evaluator >> s3_destination >= databricks_deltalake
