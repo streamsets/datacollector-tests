@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import copy
+import datetime
 import logging
 import string
 
@@ -60,11 +61,24 @@ def test_auto_commit(sdc_builder, sdc_executor, stage_attributes):
 
 @database
 @sdc_min_version('3.22.0')
-@pytest.mark.parametrize('column_type', ['BigInteger', 'Boolean', 'Date', 'DateTime', 'Enum', 'Float', 'Integer',
-                                         'Interval', 'LargeBinary', 'Numeric', 'PickleType', 'SmallInteger', 'String',
-                                         'Text', 'Unicode', 'UnicodeText'])
+@pytest.mark.parametrize('column_type, lookup_data',
+                         [('BigInteger', 12345),
+                          ('Boolean', False),
+                          ('Date', datetime.datetime(2012, 9, 9, 0, 0)),
+                          ('DateTime', datetime.datetime(2019, 2, 5, 23, 59, 59)),
+                          ('Enum', 'happy'),
+                          ('Float', 123.45),
+                          ('Integer', 12345),
+                          ('LargeBinary', b'data'),
+                          ('Numeric', 122345),
+                          ('SmallInteger', 12),
+                          ('String', 'data'),
+                          ('Text', 'data'),
+                          ('Unicode', u'data'),
+                          ('UnicodeText', u'data')])
 @pytest.mark.parametrize('existing_column_name', [True, False])
-def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, column_type, existing_column_name):
+def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, column_type, existing_column_name,
+                         lookup_data):
     """Simple JDBC Lookup processor test.
     Pipeline would enrich records with the 'field' by adding a field as 'FirstName'.
     This test just validates that the columnName from Column Mapping is well configured (except for String type,
@@ -73,13 +87,13 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
         dev_raw_data_source >> jdbc_lookup >> wiretap
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
+
     name_type = getattr(sqlalchemy, column_type)
+    database_data = [{'id': 1, 'name': lookup_data}]
     if column_type in {'String', 'Unicode'}:
         name_type = name_type(32)
     elif column_type in {'Enum'}:
         name_type = name_type('happy', 'sad', name="mood_enum")
-
-    column_name_config = 'columnName' if existing_column_name else 'notAColumnName'
 
     try:
         table = _create_table(table_name, database, None, name_type)
@@ -88,7 +102,6 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
         # if enum exists in the database we set the parameter create_type in False
         name_type = postgresql.ENUM('happy', 'sad', name="mood_enum", create_type=False)
         table = _create_table(table_name, database, None, name_type)
-
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
@@ -102,8 +115,8 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
     if type(database) in [MySqlDatabase, MariaDBDatabase]:
         query_str = f'SELECT `name` as `columnName` FROM `{table_name}` WHERE `id` = 1'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
-                            columnName=column_name_config,
-                            field='/FirstName')]
+                            columnName='columnName' if existing_column_name else 'notAColumnName',
+                            field='/LookupColumn')]
     jdbc_lookup.set_attributes(sql_query=query_str,
                                column_mappings=column_mappings)
 
@@ -112,27 +125,19 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
     pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database, credential_store)
     sdc_executor.add_pipeline(pipeline)
     try:
-        connection = None
-        if column_type in {'String'}:
-            logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
-            connection = database.engine.connect()
-            connection.execute(table.insert(), ROWS_IN_DATABASE)
-            LOOKUP_EXPECTED_DATA = copy.deepcopy(ROWS_IN_DATABASE)
-            for record in LOOKUP_EXPECTED_DATA:
-                record.pop('id')
-                record['FirstName'] = record.pop('name')
+        logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), database_data)
 
-        # Run pipeline to check mapping, as if not validated (meaning configuration is not ok), StartError
-        # exception should be raised
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        # Only check correct data for String type and no StartError
-        if not existing_column_name:
+        if existing_column_name:
+            rows_from_wiretap = [{record.field['id']: record.field['LookupColumn']} for record in wiretap.output_records]
+            # all fields are lookup, and removed by the lookup data
+            expected_data = [{str(row['id']): lookup_data} for row in ROWS_IN_DATABASE]
+            assert rows_from_wiretap == expected_data
+        else:
             pytest.fail("Should not reach as Start Error should have been raised")
-        if column_type in {'String'}:
-            rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
-                                 for record in wiretap.output_records]
-            assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
     except sdk.exceptions.StartError as e:
         if not existing_column_name:
             error_code = 'JDBC_95' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_33'
