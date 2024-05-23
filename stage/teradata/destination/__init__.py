@@ -56,7 +56,7 @@ CLEAN_UP_SESSIONS_OLDER_THAN = '''
     FROM TABLE (MonitorSession(-1, '*', 0)) AS T2
     WHERE LogonTime < (CURRENT_TIMESTAMP - INTERVAL '%s' %s) AND UserName = '%s';
 '''
-INTERVAL, UNIT = 20, 'MINUTE'
+INTERVAL, UNIT = 3, 'MINUTE'
 # Counts the Teradata sessions. Usually, we will have a hard limit of 120 sessions, and test
 # will fail if the limit is reached.
 COUNT_TERADATA_SESSIONS = '''
