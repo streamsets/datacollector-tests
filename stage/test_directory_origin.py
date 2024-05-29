@@ -2434,3 +2434,78 @@ def test_directory_origin_with_max_total_spool_files(sdc_builder, sdc_executor, 
     finally:
         if not keep_data:
             sdc_executor.execute_shell(f'rm -fr {tmp_directory}')
+
+
+@sdc_min_version('5.11.0')
+@pytest.mark.parametrize('no_of_threads', [1, 5])
+@pytest.mark.parametrize('records_to_be_generated', [1000])
+def test_directory_origin_event_reader(sdc_builder, sdc_executor, no_of_threads, records_to_be_generated, keep_data):
+    """
+        Test Directory Origin event reader mode.
+        The pipelines look like:
+
+            dev_raw_data_source >> local_fs
+            directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    # 1st pipeline which writes one record per file with interval 0.1 seconds
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=10,
+                                      records_to_be_generated=records_to_be_generated,
+                                      delay_between_batches=100)
+
+    dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=os.path.join(tmp_directory) + "/${record:value('/text')}",
+                            files_prefix='sdc-${sdc:id()}', files_suffix='txt', max_records_in_file=1)
+
+    files_wiretap = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> [local_fs, files_wiretap.destination]
+
+    files_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(files_pipeline)
+
+    # 2nd pipeline which reads the files using Directory Origin stage
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='TEXT',
+                             file_name_pattern='sdc*.txt',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             number_of_threads=no_of_threads,
+                             use_event_reader=True)
+
+    directory_wiretap = pipeline_builder.add_wiretap()
+
+    directory >> directory_wiretap.destination
+
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    try:
+        # run the 1st pipeline to create the directory and starting files
+        sdc_executor.start_pipeline(files_pipeline).wait_for_finished()
+
+        sdc_executor.start_pipeline(directory_pipeline)
+        sdc_executor.wait_for_pipeline_status(directory_pipeline, 'RUNNING')
+
+        # re-run the 1st pipeline
+        sdc_executor.start_pipeline(files_pipeline).wait_for_finished()
+
+        sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 2 * records_to_be_generated,
+                                              timeout_sec=300)
+        sdc_executor.stop_pipeline(directory_pipeline)
+
+        # Assert data is as expected
+        files_records = [record.field['text'].value for record in files_wiretap.output_records]
+        directory_records = [record.field['text'].value for record in directory_wiretap.output_records]
+        assert sorted(files_records) == sorted(directory_records)
+    finally:
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -fr {tmp_directory}')
