@@ -167,7 +167,7 @@ def test_data_types_oracle(sdc_builder, sdc_executor, input, converter_type, dat
         'scale': 2
     }]
 
-    target = builder.add_stage('Oracle (Preview)')
+    target = builder.add_stage('Oracle')
     target.table_name = table_name
     target.use_quoted_identifiers = True
     target.field_to_column_mapping = []
@@ -233,7 +233,7 @@ def test_object_names_oracle(sdc_builder, sdc_executor, database, test_name, tab
     source.raw_data = f'{{ "{column_name}" : 1 }}'
     source.stop_after_first_batch = True
 
-    target = builder.add_stage('Oracle (Preview)')
+    target = builder.add_stage('Oracle')
     target.table_name = table_name
     target.use_quoted_identifiers = True
     target.field_to_column_mapping = []
@@ -285,7 +285,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
         "field": "SEQ"
     }]
 
-    target = builder.add_stage('Oracle (Preview)')
+    target = builder.add_stage('Oracle')
     target.table_name = table_name
     target.use_quoted_identifiers = True
     target.field_to_column_mapping = []

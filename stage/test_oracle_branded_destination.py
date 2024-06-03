@@ -156,7 +156,7 @@ def _create_oracle_destination_pipeline(pipeline_builder, pipeline_title, raw_da
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
 
-    oracle_destination = pipeline_builder.add_stage('Oracle (Preview)')
+    oracle_destination = pipeline_builder.add_stage('Oracle')
     oracle_destination.set_attributes(default_operation=operation,
                                  table_name=table_name,
                                  stage_on_record_error='STOP_PIPELINE',
