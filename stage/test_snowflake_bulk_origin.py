@@ -612,6 +612,11 @@ def test_stage_file_reader_multithreading(sdc_builder, sdc_executor, snowflake, 
             f'{len(expected_records)} records should have been processed but only {len(records)} were found'
 
         # and also data is correct
+        def sort_records(record):
+            return record.field[column_names[0]]
+
+        records.sort(key=sort_records)
+
         for record, expected_record in zip(records, expected_records):
             for i in range(0, len(column_names)):
                 # Check that each row has the needed columns ...
@@ -1018,6 +1023,65 @@ def test_key_pair_authentication(sdc_builder, sdc_executor, snowflake, private_k
                 assert expected_record[i] == record.field[column_names[i]], \
                     f'The value of the field {column_names[i]} should have been {expected_record[i]},' \
                     f' but it is {record.field[column_names[i]]}'
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
+@pytest.mark.parametrize('stage_location', ["INTERNAL"])
+@pytest.mark.parametrize('purge_file', [True, False])
+def test_purge_staging_file(sdc_builder, sdc_executor, snowflake, stage_location, purge_file):
+    """
+    Tests that the Snowflake Bulk Origin properly purge staging files. Note that we are not testing if
+    local files got cleaned up, just remote ones.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location=stage_location,
+                                    snowflake_stage_name=stage_name,
+                                    **{get_table_config_arg_name(sdc_builder.version): [{'inclusionPattern': table_name}]},
+                                    purge_stage_file_after_ingesting=purge_file)
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        create_table_and_insert_values(engine, table_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        expected_records = DEFAULT_RECORDS
+
+        # Check that the number of records is equal to what we expect
+        assert len(records) == len(expected_records), \
+            f'{len(expected_records)} records should have been processed but only {len(records)} were found'
+
+        # Check that the listed files in the staging are what we expect
+        result = engine.execute(f'LIST @{stage_name}')
+        staged_files = result.fetchall()
+        result.close()
+
+        if purge_file:
+            assert 0 == len(staged_files)
+        else:
+            assert 1 == len(staged_files)
     finally:
         snowflake.delete_staged_files(storage_path)
         snowflake.drop_entities(stage_name=stage_name)
