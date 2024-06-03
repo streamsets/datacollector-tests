@@ -1003,18 +1003,79 @@ def test_s3_connection_timeout(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'s3_encryption': 'KMS', 'staging_location': 'AWS_S3'},
-                                              {'s3_encryption': 'NONE', 'staging_location': 'AWS_S3'},
-                                              {'s3_encryption': 'S3', 'staging_location': 'AWS_S3'}])
-def test_s3_encryption(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@aws('s3', 'kms')
+@sdc_min_version('5.11.0')
+@pytest.mark.parametrize('s3_encryption', ['NONE', 'S3', 'KMS'])
+def test_s3_encryption(sdc_builder, sdc_executor, aws, deltalake, s3_encryption):
+    """Test for Databricks Delta Lake with AWS S3 storage using server-side encryption.
 
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    table_name = f'stf_test_null_value_{get_random_string()}'
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'s3_encryption': 'KMS', 'staging_location': 'AWS_S3'}])
-def test_s3_encryption_context(sdc_builder, sdc_executor, stage_attributes):
-    pass
+    rows_data = [{"title": 'La casa de Bernarda Alba', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers"}, ]
+
+    engine = deltalake.engine
+    data = '\n'.join(json.dumps(rec) for rec in rows_data)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name=table_name,
+                                        purge_stage_file_after_ingesting=False,
+                                        column_separator=';',
+                                        encryption=s3_encryption)
+    if s3_encryption == 'KMS':
+        databricks_deltalake.set_attributes(aws_kms_key_arn=aws.kms_key_arn)
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        logger.info(f'Creating table {table_name} ...')
+        deltalake.create_table(table_name)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        # Assert data from deltalake table is same as what was input.
+        connection = deltalake.connect_engine(engine)
+        result = connection.execute(f'select * from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        expected_data = [dict(d) for d in rows_data]
+
+        assert len(data_from_database) == len(expected_data)
+        assert data_from_database[0]['title'] == "La casa de Bernarda Alba"
+
+        result.close()
+
+        client_to_read = aws.s3
+        list_s3_objs = client_to_read.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)
+        s3_obj_key = client_to_read.get_object(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+        # Assert that we actually not purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] == 1, \
+            "Purge stage file after ingesting is False, so there should be 1 file in the s3 bucket"
+
+        if s3_encryption == "KMS":
+            assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
+            assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
+        else:
+            assert s3_obj_key['ServerSideEncryption'] == 'AES256'
+
+    finally:
+        _clean_up_databricks(deltalake, table_name)
 
 
 @stub

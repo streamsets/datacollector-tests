@@ -16,6 +16,7 @@ import logging
 import string
 import datetime
 import time
+import boto3
 
 import pytest
 from abc import ABC, abstractmethod
@@ -46,6 +47,7 @@ DEFAULT_EXTERNAL_STAGING_LOCATION = ['ADLS_GEN2']
 LOCAL_STAGING_LOCATION = ['LOCAL']
 ALL_STAGING_LOCATIONS = LOCAL_STAGING_LOCATION + EXTERNAL_STAGING_LOCATIONS
 ALL_STAGING_FILE_FORMATS = ['CSV', 'PARQUET']
+AWS_S3_ENCRYPTION_OPTIONS = ['NONE', 'S3', 'KMS']
 
 CREATE_TABLE_DDL_TEMPLATE = 'CREATE MULTISET TABLE %s.%s ( %s )'
 
@@ -256,6 +258,11 @@ class AwsTeradataAuthorization(TeradataAuthorization):
              f"USER '{self.teradata.aws_access_key_id}' "
              f"PASSWORD '{self.teradata.aws_secret_access_key}'")
 
+    def get_s3_object_key_by_prefix(self, s3_prefix):
+        s3_client = boto3.client('s3', region_name=self.teradata.s3_region_name)
+        list_s3_objs = s3_client.list_objects_v2(Bucket=self.teradata.s3_bucket_name, Prefix=s3_prefix)
+        obj_key = s3_client.get_object(Bucket=self.teradata.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+        return obj_key
 
 class BlobStorageTeradataAuthorization(TeradataAuthorization):
     def create(self):

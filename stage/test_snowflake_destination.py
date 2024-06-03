@@ -4316,3 +4316,73 @@ def wait_for_snowpipe_data_ingestion(query_function, max_attempts=5):
         except Exception as e:
             logger.info(f'Found an error while querying database: {e}. Ignoring...')
     return data_from_database
+
+
+@aws('s3', 'kms')
+@snowflake
+@sdc_min_version('5.11.0')
+@pytest.mark.parametrize('s3_encryption', ['NONE', 'S3', 'KMS'])
+def test_s3_encryption(sdc_builder, sdc_executor, snowflake, aws, s3_encryption):
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Create a table and stage in Snowflake.
+    table = snowflake.create_table(table_name.lower())
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location='AWS_S3')
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    raw_data = '\n'.join(json.dumps(row) for row in ROWS_IN_DATABASE)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(stage_location='AWS_S3',
+                                         purge_stage_file_after_ingesting=False,
+                                         snowflake_stage_name=stage_name,
+                                         staging_file_format='JSON',
+                                         table=table_name,
+                                         encryption=s3_encryption)
+
+    if s3_encryption == 'KMS':
+        snowflake_destination.set_attributes(aws_kms_key_arn=aws.kms_key_arn)
+
+    dev_raw_data_source >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert data_from_database == [(row['name'], row['id']) for row in ROWS_IN_DATABASE]
+
+        client_to_read = aws.s3
+        s3_key_prefix = f'{snowflake.aws_s3_stage.aws_s3_key_prefix}/{storage_path}'
+        list_s3_objs = client_to_read.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key_prefix)
+        s3_obj_key = client_to_read.get_object(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+        # Assert that we actually not purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key_prefix)['KeyCount'] == 1, \
+            "Purge stage file after ingesting is False, so there should be 1 file in the s3 bucket"
+
+        if s3_encryption == "KMS":
+            assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
+            assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
+        else:
+            assert s3_obj_key['ServerSideEncryption'] == 'AES256'
+
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()

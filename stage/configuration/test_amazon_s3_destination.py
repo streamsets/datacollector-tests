@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pytest
+import string
+import json
 
 from streamsets.testframework.decorators import stub
+from streamsets.sdk.utils import Version
+from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
+S3_SANDBOX_PREFIX = 'sandbox'
 
 @stub
 def test_access_key_id(sdc_builder, sdc_executor):
@@ -188,17 +194,80 @@ def test_secret_access_key(sdc_builder, sdc_executor):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'server_side_encryption_option': 'CUSTOMER',
-                                               'use_server_side_encryption': True},
-                                              {'server_side_encryption_option': 'KMS',
-                                               'use_server_side_encryption': True},
-                                              {'server_side_encryption_option': 'NONE',
-                                               'use_server_side_encryption': True},
-                                              {'server_side_encryption_option': 'S3',
-                                               'use_server_side_encryption': True}])
-def test_server_side_encryption_option(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@aws('s3', 'kms')
+@pytest.mark.parametrize('server_side_encryption_option', ['KMS', 'NONE', 'S3'])
+@sdc_min_version('5.11.0')
+def test_server_side_encryption_option(sdc_builder, sdc_executor, aws, server_side_encryption_option, acl="DEFAULT"):
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket='${record:value("/bucket")}',
+                                  data_format='JSON',
+                                  partition_prefix=s3_key,
+                                  server_side_encryption_option=server_side_encryption_option,
+                                  object_ownership=acl)
+
+    # Configuration Server Side Encryption with KMS
+    if server_side_encryption_option == 'KMS':
+        s3_destination.set_attributes(aws_kms_key_arn=aws.kms_key_arn)
+
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> s3_destination
+    s3_destination >= wiretap.destination
+
+    s3_dest_pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_dest_pipeline)
+
+    client = aws.s3
+
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
+
+        # Validate event generation
+        assert len(wiretap.output_records) == 1
+        assert [record.field['bucket'] for record in wiretap.output_records][0] == s3_bucket
+        assert [record.field['recordCount'] for record in wiretap.output_records][0] == 1
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        client_to_read = client
+        s3_obj_key = client_to_read.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+
+        # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert json.loads(s3_contents) == json.loads(raw_str)
+
+        if server_side_encryption_option == "KMS":
+            assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
+            assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
+
+        else:
+            ### Amazon S3 now applies server-side encryption with Amazon S3 managed keys (SSE-S3) as the base level of
+            # encryption for every bucket in Amazon S3. Starting January 5, 2023, all new object uploads to Amazon S3
+            # are automatically encrypted at no additional cost and with no impact on performance. The automatic
+            # encryption status for S3 bucket default encryption configuration and for new object uploads is available
+            # in AWS CloudTrail logs, S3 Inventory, S3 Storage Lens, the Amazon S3 console, and as an additional
+            # Amazon S3 API response header in the AWS Command Line Interface and AWS SDKs.
+            assert s3_obj_key['ServerSideEncryption'] == 'AES256'
+
+    finally:
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @stub
