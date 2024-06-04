@@ -2287,8 +2287,7 @@ def start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
 @pytest.mark.parametrize("on_error_record",
                          ["STOP_PIPELINE", "TO_ERROR"]
 )
-def test_gcp_write_records_on_error(sdc_builder, sdc_executor, gcp,
-                                    on_error_record, position):
+def test_gcp_write_records_on_error(sdc_builder, sdc_executor, gcp, on_error_record):
     """
     Write DB with malformed records and check pipeline behaves as set in 'on_record_error'
 

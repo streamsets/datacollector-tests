@@ -501,7 +501,7 @@ def test_cassandra_destination_errors(
 
     if on_record_error == 'DISCARD':
         start_and_check_pipeline_behaviour = _start_pipeline_and_check_on_error_record_discard
-    elif on_record_error == 'START_PIPELINE':
+    elif on_record_error == 'STOP_PIPELINE':
         start_and_check_pipeline_behaviour = _start_pipeline_and_check_on_error_record_stops
     elif on_record_error == 'TO_ERROR':
         start_and_check_pipeline_behaviour = _start_pipeline_and_check_on_error_record_to_error
