@@ -315,3 +315,81 @@ def test_parquet_fixed_type_decimal_logicaltype(sdc_builder, sdc_executor):
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
+
+
+@sdc_min_version('5.11.0')
+def test_parquet_schema_in_header(sdc_builder, sdc_executor):
+    """Test to check that the generated Parquet schema can be used in other stages
+
+       Directory >> LocalFS
+
+       We use pyarrow.parquet to write a parquet file
+    """
+
+    temp_dir_origin = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
+    temp_dir_dest = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
+    temp_prefix = get_random_string()
+    temp_base64 = os.path.join(temp_dir_origin, temp_prefix + ".base64")
+    temp_parquet = os.path.join(temp_dir_origin, temp_prefix + ".parquet")
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # create raw data
+    num_records = 1000
+    data = []
+    for id in range(num_records):
+        data.append({"id": id, "text": get_random_string()})
+
+    # build parquet data
+    schema = pa.schema([('id', pa.uint32()), ('text', pa.string())])
+    batch = pa.RecordBatch.from_arrays(
+        [pa.array([record[key] for record in data]) for key in data[0].keys()],
+        names=schema.names
+    )
+    table = pa.Table.from_batches([batch])
+
+    # write parquet data to sdc executor
+    with tempfile.NamedTemporaryFile(mode='r+b') as fd:
+        pq.write_table(table, fd.name)
+        fd.flush()
+        fd.seek(0)
+        data_base64 = base64.b64encode(fd.read())
+    data_str = data_base64.decode()
+    sdc_executor.write_file(temp_base64, data_str)
+    sdc_executor.execute_shell(f'base64 --decode < {temp_base64} > {temp_parquet}')
+
+    directory = pipeline_builder.add_stage('Directory')
+    directory.set_attributes(files_directory=temp_dir_origin,
+                          file_name_pattern="*.parquet",
+                          data_format="PARQUET")
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='PARQUET',
+                            parquet_schema_location='HEADER',
+                            directory_template=temp_dir_dest)
+
+    directory >> local_fs
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', num_records, timeout_sec=60)
+        sdc_executor.stop_pipeline(pipeline)
+
+        with tempfile.NamedTemporaryFile() as tmp:
+             base64_parquet = sdc_executor.execute_shell(f'cat {temp_dir_dest}/* | openssl base64 -A').stdout
+             tmp.write(base64.b64decode(base64_parquet))
+             tmp.flush()
+             parquet = pq.read_table(tmp, schema=schema)
+
+        assert parquet.num_rows == len(data), 'Wrong number of records!'
+        assert parquet.num_columns == len(data[0].keys()), 'Wrong number of fields!'
+        for parquet_record, record in zip(parquet.to_pylist(), data):
+            assert parquet_record == record, f'Wrong record found: "{parquet_record}"'
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.execute_shell(f'rm -rf {temp_dir_origin}')
+        sdc_executor.execute_shell(f'rm -rf {temp_dir_dest}')
