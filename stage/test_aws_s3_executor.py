@@ -107,8 +107,10 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, sse_kms,
                                content='${record:value("/company")}')
     if sse_kms:
         # Use SSE with KMS
-        s3_executor.set_attributes(use_server_side_encryption=True,
-                                   server_side_encryption_option='KMS',
+        if Version(sdc_builder.version) < Version('5.11.0'):
+            s3_executor.set_attributes(use_server_side_encryption=True)
+
+        s3_executor.set_attributes(server_side_encryption_option='KMS',
                                    aws_kms_key_arn=aws.kms_key_arn)
     if anonymous:
         configure_stage_for_anonymous(s3_executor)
@@ -205,8 +207,10 @@ def _run_test_s3_executor_copy_object(sdc_builder, sdc_executor, aws, sse_kms):
 
     if sse_kms:
         # Use SSE with KMS
-        s3_executor.set_attributes(use_server_side_encryption=True,
-                                   server_side_encryption_option='KMS',
+        if Version(sdc_builder.version) < Version('5.11.0'):
+            s3_executor.set_attributes(use_server_side_encryption=True)
+
+        s3_executor.set_attributes(server_side_encryption_option='KMS',
                                    aws_kms_key_arn=aws.kms_key_arn)
 
     wiretap = builder.add_wiretap()

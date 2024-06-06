@@ -417,8 +417,10 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous,
             s3_destination.set_attributes(object_ownership=acl)
         if sse_kms:
             # Use SSE with KMS
-            s3_destination.set_attributes(use_server_side_encryption=True,
-                                          server_side_encryption_option='KMS',
+            if Version(sdc_builder.version) < Version('5.11.0'):
+                s3_destination.set_attributes(use_server_side_encryption=True)
+
+            s3_destination.set_attributes(server_side_encryption_option='KMS',
                                           aws_kms_key_arn=aws.kms_key_arn)
         if anonymous:
             configure_stage_for_anonymous(s3_destination)
