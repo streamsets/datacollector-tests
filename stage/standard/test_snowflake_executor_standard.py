@@ -19,8 +19,8 @@ import re
 import string
 
 import pytest
+import pytz
 import sqlalchemy
-
 from streamsets.testframework.markers import snowflake, sdc_min_version, sdc_enterprise_lib_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -117,6 +117,7 @@ DATA_TYPES_SNOWFLAKE = [
     ("10:00:00", "TIME", "NVARCHAR2(50)", "Mon Dec 01 10:00:00 GMT 1969"),
     # DateTime
     ("2020-01-01 10:00:00", "DATETIME", "TIMESTAMP_NTZ", datetime.datetime(2020, 1, 1, 10, 0)),
+    ("2020-01-01 10:00:00", "DATETIME", "TIMESTAMP_LTZ", datetime.datetime(2020, 1, 1, 10, 0)), # The expected will be modified by the test due to a bug in datetime
     ("2020-01-01 10:00:00", "DATETIME", "CHAR(50)", "Wed Jan 01 10:00:00 GMT 2020"),
     ("2020-01-01 10:00:00", "DATETIME", "VARCHAR(50)", "Wed Jan 01 10:00:00 GMT 2020"),
     ("2020-01-01 10:00:00", "DATETIME", "VARCHAR2(50)", "Wed Jan 01 10:00:00 GMT 2020"),
@@ -209,7 +210,13 @@ def test_data_types(sdc_builder, sdc_executor, snowflake, input_value, converter
         "DATE": "${time:extractStringFromDate(record:value('/VALUE'), 'yyyy-MM-dd HH:mm:ss')}",
         "TIME": "${time:extractStringFromDate(record:value('/VALUE'), 'HH:mm:ss')}",
         "TIMESTAMP_NTZ": "${time:extractStringFromDate(record:value('/VALUE'), 'yyyy-MM-dd HH:mm:ss')}",
+        "TIMESTAMP_LTZ": "${time:extractStringFromDate(record:value('/VALUE'), 'yyyy-MM-dd HH:mm:ss')}",
     }
+
+    if db_type == 'TIMESTAMP_LTZ': # this is needed due to a strange behavior (bug?) in datetime
+        timezone = pytz.timezone('America/Los_Angeles')
+        expected = datetime.datetime(2020, 1, 1, 10, 0)
+        expected = timezone.localize(expected)
 
     # Create stage
     snowflake.create_stage(stage_name, storage_path)

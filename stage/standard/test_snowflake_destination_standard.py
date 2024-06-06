@@ -17,6 +17,7 @@ import json
 import logging
 import string
 import pytest
+import pytz
 
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import snowflake, sdc_min_version
@@ -120,6 +121,7 @@ DATA_TYPES_SNOWFLAKE = [
     ('10:00:00', 'TIME', 'NVARCHAR2(50)', '10:00:00.000'),
     # DateTime
     ('2020-01-01 10:00:00', 'DATETIME', 'TIMESTAMP_NTZ', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'DATETIME', 'TIMESTAMP_LTZ', datetime.datetime(2020, 1, 1, 10, 0)), # The expected will be modified by the test due to a bug in datetime
     ('2020-01-01 10:00:00', 'DATETIME', 'CHAR(50)', '2020-01-01 10:00:00.000'),
     ('2020-01-01 10:00:00', 'DATETIME', 'VARCHAR(50)', '2020-01-01 10:00:00.000'),
     ('2020-01-01 10:00:00', 'DATETIME', 'VARCHAR2(50)', '2020-01-01 10:00:00.000'),
@@ -244,6 +246,11 @@ def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_t
             'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
             'scale': 2
         }]
+
+    if database_type == 'TIMESTAMP_LTZ': # this is needed due to a strange behavior (bug?) in datetime
+        timezone = pytz.timezone('America/Los_Angeles')
+        expected = datetime.datetime(2020, 1, 1, 10, 0)
+        expected = timezone.localize(expected)
 
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
