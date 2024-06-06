@@ -15,7 +15,17 @@
 import pytest
 from streamsets.testframework.markers import sdc_min_version, web_client
 
-from stage.utils.webclient import deps, free_port, server, Endpoint, LIBRARY, RELEASE_VERSION, WEB_CLIENT, verify_header
+from stage.utils.webclient import (
+    deps,
+    free_port,
+    server,
+    Endpoint,
+    LIBRARY,
+    PER_STATUS_ACTIONS,
+    RELEASE_VERSION,
+    WEB_CLIENT,
+    verify_header,
+)
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 
@@ -96,9 +106,9 @@ def test_http_methods(sdc_builder, sdc_executor, cleanup, server, test_name, met
     server.ready()
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON',
-                                       stop_after_first_batch=True,
-                                       raw_data=raw_data)
+    dev_raw_data_source.set_attributes(
+        data_format="JSON", stop_after_first_batch=True, raw_data=raw_data, per_status_actions=PER_STATUS_ACTIONS
+    )
 
     webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
     webclient_processor.set_attributes(
@@ -211,6 +221,7 @@ def test_multiple_values_behavior(
         json_content=json_content,
         output_field=f"/{output_field}",
         multiple_values_behavior=multiple_values_behavior,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
 
     wiretap = pipeline_builder.add_wiretap()
@@ -265,7 +276,8 @@ def test_common_header(sdc_builder, sdc_executor, cleanup, server, test_name):
                 "commonHeaderValue": "some_value2"
             }
         ],
-        output_field='/field1'
+        output_field="/field1",
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 
@@ -317,7 +329,8 @@ def test_security_header(sdc_builder, sdc_executor, cleanup, server, test_name):
                 "securityHeaderValue": "some_value2"
             }
         ],
-        output_field='/field1'
+        output_field="/field1",
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 
@@ -359,19 +372,10 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     webclient_processor.set_attributes(
         library="streamsets-datacollector-webclient-impl-okhttp-lib",
         request_endpoint=url,
-        security_headers=[
-            {
-                "securityHeaderName": "header1",
-                "securityHeaderValue": "some_value1"
-            }
-        ],
-        common_headers=[
-            {
-                "commonHeaderName": "header2",
-                "commonHeaderValue": "some_value2"
-            }
-        ],
-        output_field='/field1'
+        security_headers=[{"securityHeaderName": "header1", "securityHeaderValue": "some_value1"}],
+        common_headers=[{"commonHeaderName": "header2", "commonHeaderValue": "some_value2"}],
+        output_field="/field1",
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 

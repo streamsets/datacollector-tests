@@ -16,7 +16,17 @@
 import pytest
 from streamsets.testframework.markers import sdc_min_version, web_client
 
-from stage.utils.webclient import deps, free_port, server, Endpoint, LIBRARY, RELEASE_VERSION, WEB_CLIENT, verify_header
+from stage.utils.webclient import (
+    deps,
+    free_port,
+    server,
+    Endpoint,
+    LIBRARY,
+    PER_STATUS_ACTIONS,
+    RELEASE_VERSION,
+    WEB_CLIENT,
+    verify_header,
+)
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 
@@ -114,7 +124,10 @@ def test_http_methods(
 
     webclient_destination = pipeline_builder.add_stage(WEB_CLIENT, type="destination")
     webclient_destination.set_attributes(
-        library=LIBRARY, request_endpoint=f"{server.url}/{endpoint.path}", method=method
+        library=LIBRARY,
+        request_endpoint=f"{server.url}/{endpoint.path}",
+        method=method,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     if body is not None:
         if body_expression is None:
@@ -174,7 +187,8 @@ def test_common_header(sdc_builder, sdc_executor, cleanup, server, test_name):
                 "commonHeaderName": "header2",
                 "commonHeaderValue": "some_value2"
             }
-        ]
+        ],
+        per_status_actions=PER_STATUS_ACTIONS,
     )
 
     dev_raw_data_source >> webclient_destination
@@ -220,7 +234,8 @@ def test_security_header(sdc_builder, sdc_executor, cleanup, server, test_name):
                 "securityHeaderName": "header2",
                 "securityHeaderValue": "some_value2"
             }
-        ]
+        ],
+        per_status_actions=PER_STATUS_ACTIONS,
     )
 
     dev_raw_data_source >> webclient_destination
@@ -257,18 +272,9 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     webclient_destination.set_attributes(
         library="streamsets-datacollector-webclient-impl-okhttp-lib",
         request_endpoint=url,
-        security_headers=[
-            {
-                "securityHeaderName": "header1",
-                "securityHeaderValue": "some_value1"
-            }
-        ],
-        common_headers=[
-            {
-                "commonHeaderName": "header2",
-                "commonHeaderValue": "some_value2"
-            }
-        ]
+        security_headers=[{"securityHeaderName": "header1", "securityHeaderValue": "some_value1"}],
+        common_headers=[{"commonHeaderName": "header2", "commonHeaderValue": "some_value2"}],
+        per_status_actions=PER_STATUS_ACTIONS,
     )
 
     dev_raw_data_source >> webclient_destination

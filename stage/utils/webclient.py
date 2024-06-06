@@ -29,6 +29,24 @@ LIBRARY = "streamsets-datacollector-webclient-impl-okhttp-lib"
 logger = logging.getLogger(__name__)
 
 
+PER_STATUS_ACTIONS = [
+    {
+        "codes": ["Informational", "Successful", "Redirection"],
+        "action": "Record",
+        "backoff": "${unit:toMilliseconds(1, second)}",
+        "retries": 5,
+        "failure": "Error",
+    },
+    {
+        "codes": ["Default", "ClientError", "ServerError"],
+        "action": "ConstantRetry",
+        "backoff": "${unit:toMilliseconds(1, second)}",
+        "retries": 5,
+        "failure": "Error",
+    },
+]
+
+
 def _disable_flask_log():
     """Disable the Flask logger."""
     log = logging.getLogger("werkzeug")

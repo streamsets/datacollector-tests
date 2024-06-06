@@ -24,7 +24,17 @@ from streamsets.testframework.markers import sdc_min_version, sdc_min_version, w
 from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.exceptions import RunError
 
-from stage.utils.webclient import deps, free_port, server, Endpoint, LIBRARY, RELEASE_VERSION, WEB_CLIENT, verify_header
+from stage.utils.webclient import (
+    deps,
+    free_port,
+    server,
+    Endpoint,
+    LIBRARY,
+    PER_STATUS_ACTIONS,
+    RELEASE_VERSION,
+    WEB_CLIENT,
+    verify_header,
+)
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 
@@ -58,6 +68,7 @@ def test_hello_world(sdc_builder, sdc_executor, cleanup, server, test_name):
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
         ingestion_mode="Batch",
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 
@@ -139,6 +150,7 @@ def test_webclient_origin_response_data_format(
         batch_wait_time_in_ms=10,
         ingestion_mode="Batch",
         response_data_format=data_format,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     # if log data format
     if data_format == "LOG":
@@ -180,7 +192,8 @@ def test_webclient_origin_oauth2_authentication_scheme(sdc_builder, sdc_executor
         token_endpoint=f'{web_client.has_base_url}/oauth2/server/token',
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
-        ingestion_mode="Batch"
+        ingestion_mode="Batch",
+        per_status_actions=PER_STATUS_ACTIONS,
     )
 
     if grant_type == 'ClientCredentials':
@@ -278,7 +291,8 @@ def test_okhttp_webclient_origin_response_data_max_size(sdc_builder, sdc_executo
         method='Get',
         ingestion_mode='Batch',
         response_data_format='JSON',
-        max_data_length_in_bytes=data_length
+        max_data_length_in_bytes=data_length,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = builder.add_wiretap()
     origin >> wiretap.destination
@@ -332,6 +346,7 @@ def test_pagination_page(sdc_builder, sdc_executor, cleanup, server, test_name, 
         result_field_path="/records",
         initial_page=0,
         final_page=pages,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
     webclient_origin >> wiretap.destination
@@ -392,6 +407,7 @@ def test_pagination_offset(sdc_builder, sdc_executor, cleanup, server, test_name
         result_field_path="/records",
         initial_offset=0,
         final_offset=last,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 
@@ -481,6 +497,7 @@ def test_linked_pagination(
         result_field_path="/records",
         next_page_link_base=server.url,
         stop_condition=stop_condition,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     if location == "body":
         webclient_origin.set_attributes(pagination_mode="LinkInBody", next_page_link_field_path="/next")
@@ -569,6 +586,7 @@ def test_http_methods(sdc_builder, sdc_executor, cleanup, server, test_name, met
         ingestion_mode="Batch",
         wait_time_between_requests_in_ms=10000,
         method=method,
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     if body is not None:
         webclient_origin.set_attributes(request_body=json.dumps(body))
@@ -633,6 +651,7 @@ def test_no_more_data_event_on_pagination_none(sdc_builder, sdc_executor, cleanu
         batch_wait_time_in_ms=10000,
         ingestion_mode="Batch",
         pagination_mode="None",
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
     webclient_origin >> wiretap.destination
@@ -688,7 +707,8 @@ def test_common_header(sdc_builder, sdc_executor, cleanup, server, test_name):
                 "commonHeaderName": "header2",
                 "commonHeaderValue": "some_value2"
             }
-        ]
+        ],
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 
@@ -735,7 +755,8 @@ def test_security_header(sdc_builder, sdc_executor, cleanup, server, test_name):
                 "securityHeaderName": "header2",
                 "securityHeaderValue": "some_value2"
             }
-        ]
+        ],
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 
@@ -773,18 +794,9 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
         max_batch_size_in_records=1,
         batch_wait_time_in_ms=10,
         ingestion_mode="Batch",
-        security_headers=[
-            {
-                "securityHeaderName": "header1",
-                "securityHeaderValue": "some_value1"
-            }
-        ],
-        common_headers=[
-            {
-                "commonHeaderName": "header2",
-                "commonHeaderValue": "some_value2"
-            }
-        ]
+        security_headers=[{"securityHeaderName": "header1", "securityHeaderValue": "some_value1"}],
+        common_headers=[{"commonHeaderName": "header2", "commonHeaderValue": "some_value2"}],
+        per_status_actions=PER_STATUS_ACTIONS,
     )
     wiretap = pipeline_builder.add_wiretap()
 
@@ -797,3 +809,128 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
     output_records = wiretap.output_records
     assert success_message == output_records[0].field
+
+
+@sdc_min_version("5.11.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, success, hits, err",
+    [
+        [
+            [  # Test groups.
+                {
+                    "codes": ["Successful"],
+                    "action": "Record",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 3,
+                    "failure": "Abort",
+                },
+                {
+                    "codes": ["Default"],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 3,
+                    "failure": "Abort",
+                },
+            ],
+            200, True, 1, None,
+        ],
+        [
+            [  # Test another group..
+                {
+                    "codes": ["ClientError"],
+                    "action": "Record",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 3,
+                    "failure": "Abort",
+                },
+                {
+                    "codes": ["Default"],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 3,
+                    "failure": "Abort",
+                },
+            ],
+            400, True, 1, None,
+        ],
+        [  # Test individual behaviours
+            [
+                {
+                    "codes": ["HTTP_400"],
+                    "action": "Record",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 3,
+                    "failure": "Abort",
+                },
+                {
+                    "codes": ["Default"],
+                    "action": "Abort",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 3,
+                    "failure": "Abort",
+                },
+            ],
+            400, True, 1, None,
+        ],
+        [  # Test abort.
+            [
+                {
+                    "codes": ["HTTP_200"],
+                    "action": "Abort",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 0,
+                    "failure": "Abort",
+                },
+                {
+                    "codes": ["Default"],
+                    "action": "Record",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 3,
+                    "failure": "Abort",
+                },
+            ], 200, False, 1, "WEB_CLIENT_RUNTIME_0069",
+        ],
+    ],
+)
+def test_per_status_actions(
+    sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err
+):
+
+    from flask import json, Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        logger.error("\n\n\nHIT\n\n\n")
+        return Response('{"Hello": "World"}', status=status, mimetype="application/json")
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint.recv_url(),
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        per_status_actions=per_status_actions,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    if success:
+        cleanup(handler.stop_work, work)
+        handler.start_work(work)
+        handler.wait_for_metric(work, "input_record_count", hits, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    else:
+        with pytest.raises(RunError) as exception_info:
+            handler.start_work(work)
+            handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+        assert err in exception_info.value.message
