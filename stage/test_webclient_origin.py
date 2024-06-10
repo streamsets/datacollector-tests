@@ -658,7 +658,7 @@ def test_no_more_data_event_on_pagination_none(sdc_builder, sdc_executor, cleanu
 
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
     finisher.react_to_events = True
-    finisher.on_record_error = "STOP_PIPELINE"
+    finisher.on_record_error = "DISCARD"
     finisher.stage_record_preconditions = ["${record:eventType() == 'no-more-data'}"]
     webclient_origin >= finisher
 
