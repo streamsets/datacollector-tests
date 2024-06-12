@@ -451,9 +451,38 @@ def test_directory_origin_configuration_custom_log4j_format(sdc_builder, sdc_exe
 
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['APACHE_CUSTOM_LOG_FORMAT'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_executor, data_format, log_format):
-    pass
+def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_executor, data_format,
+                                                          log_format, shell_executor, file_writer):
+    """Check if the file custom_log_format for the log format works properly.
+    Here we consider access logs from apache version 2.2
+    as our test data. Check if Directory origin can read this data.
+    """
+    file_name = 'apache_custom_log_data.log'
+    file_content = '127.0.0.1 custom_log test_user [09/May/2019:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326 "http://almhuette-raith.at/administrator/" "Mozilla/5.0 (Windows NT 6.0; rv:34.0) Gecko/20100101 Firefox/34.0" ""'
+
+    try:
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
+
+        attributes = {'data_format': data_format,
+                      'log_format': log_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern_mode': 'GLOB',
+                      'file_name_pattern': '*.log',
+                      'custom_log_format': '%h %l %u  %t "%r" %>s %b "%{Referer}i" "%{User-agent}i" %U'}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory].output
+
+        assert output_records[0].field == {'remoteUser': 'test_user', 'request': 'GET /apache_pb.gif HTTP/1.0',
+                                           'referer': 'http://almhuette-raith.at/administrator/',
+                                           'logName': 'custom_log', 'remoteHost': '127.0.0.1',
+                                           'userAgent': 'Mozilla/5.0 (Windows NT 6.0; rv:34.0) Gecko/20100101 Firefox/34.0',
+                                           'bytesSent': '2326', 'urlPath': '""', 'status': '200'}
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['SDC_JSON'])
