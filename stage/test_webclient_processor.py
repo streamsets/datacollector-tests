@@ -391,6 +391,50 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     assert success_message == output_records[0].field.get('field1')
 
 
+def test_common_header_evaluation(sdc_builder, sdc_executor, cleanup, server, test_name):
+    from flask import json, request
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    test_header = "testheader"
+    expected_value = 10
+
+    def serve():
+        if request.headers[test_header] != f"{expected_value}":
+            pytest.fail("Expected value not found in header.")
+        return json.dumps({"field1": 10})
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON", stop_after_first_batch=True, raw_data=json.dumps({"field1": 10})
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=url,
+        common_headers=[{"commonHeaderName": test_header, "commonHeaderValue": f"${{record:value('/field1')}}"}],
+        output_field="/field1",
+        per_status_actions=PER_STATUS_ACTIONS,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+
 @sdc_min_version("5.11.0")
 def test_endpoint_evaluation(sdc_builder, sdc_executor, cleanup, server, test_name,):
     from flask import json, Response
