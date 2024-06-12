@@ -31,6 +31,7 @@ from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 
 import logging
 import requests
+from random import randint
 
 DEFAULT_TIMEOUT_IN_SEC = 30
 
@@ -388,3 +389,48 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
     output_records = wiretap.output_records
     assert success_message == output_records[0].field.get('field1')
+
+
+@sdc_min_version("5.11.0")
+def test_endpoint_evaluation(sdc_builder, sdc_executor, cleanup, server, test_name,):
+    from flask import json, Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    endpoint_id = randint(0, 10000)
+    field_value = 10
+
+    def serve():
+        return Response('{"Hello": "World"}', status=200, mimetype="application/json")
+
+    endpoint = Endpoint(serve, ["GET"], path=f"endpoint_{endpoint_id}")
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON", stop_after_first_batch=True, raw_data=json.dumps({"field1": field_value, "endpoint_id": endpoint_id})
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library="streamsets-datacollector-webclient-impl-okhttp-lib",
+        request_endpoint=f"{server.url}/endpoint_${{record:value('/endpoint_id')}}",
+        output_field="/field2",
+        per_status_actions=PER_STATUS_ACTIONS,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    output_records = wiretap.output_records
+    logger.error(output_records[0].field.get('field1'))
+    assert output_records[0].field.get('field1').value == field_value
+    assert output_records[0].field.get('field2') == {"Hello": "World"}

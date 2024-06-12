@@ -902,7 +902,6 @@ def test_per_status_actions(
     pipeline_builder = handler.get_pipeline_builder()
 
     def serve():
-        logger.error("\n\n\nHIT\n\n\n")
         return Response('{"Hello": "World"}', status=status, mimetype="application/json")
 
     endpoint = Endpoint(serve, ["GET"])
@@ -934,3 +933,4 @@ def test_per_status_actions(
             handler.start_work(work)
             handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
         assert err in exception_info.value.message
+
