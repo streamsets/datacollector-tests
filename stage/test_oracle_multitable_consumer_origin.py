@@ -999,7 +999,7 @@ def test_oracle_multitable_oracle_split_by_date(sdc_builder, sdc_executor, datab
 
         FIELD_MAPPINGS = [dict(field='/ID', columnName='ID'),
                           dict(field='/DT', columnName='DT')]
-        destination = builder.add_stage('Oracle (Preview)')
+        destination = builder.add_stage('Oracle')
         destination.set_attributes(default_operation='INSERT',
                                    table_name=table_name_dest,
                                    field_to_column_mapping=FIELD_MAPPINGS,

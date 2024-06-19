@@ -24,6 +24,7 @@ from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
+ORACLE_DESTINATION = 'com_streamsets_pipeline_stage_destination_OracleDTarget'
 pytestmark = [database("oracle"), sdc_min_version('5.10.0')]
 
 
@@ -167,7 +168,7 @@ def test_data_types_oracle(sdc_builder, sdc_executor, input, converter_type, dat
         'scale': 2
     }]
 
-    target = builder.add_stage('Oracle')
+    target = builder.add_stage(name=ORACLE_DESTINATION)
     target.table_name = table_name
     target.use_quoted_identifiers = True
     target.field_to_column_mapping = []
@@ -233,7 +234,7 @@ def test_object_names_oracle(sdc_builder, sdc_executor, database, test_name, tab
     source.raw_data = f'{{ "{column_name}" : 1 }}'
     source.stop_after_first_batch = True
 
-    target = builder.add_stage('Oracle')
+    target = builder.add_stage(name=ORACLE_DESTINATION)
     target.table_name = table_name
     target.use_quoted_identifiers = True
     target.field_to_column_mapping = []
@@ -285,7 +286,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
         "field": "SEQ"
     }]
 
-    target = builder.add_stage('Oracle')
+    target = builder.add_stage(name=ORACLE_DESTINATION)
     target.table_name = table_name
     target.use_quoted_identifiers = True
     target.field_to_column_mapping = []
