@@ -603,7 +603,7 @@ def test_stage_file_reader_multithreading(sdc_builder, sdc_executor, snowflake, 
         sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=600)
 
         records = wiretap.output_records
-        expected_records = records_to_insert * num_tables
+        expected_records = sorted(records_to_insert * num_tables)
         # each thread creates its own batches, and we have 1 thread per table
         num_expected_batches = int(math.ceil(num_records / batch_size)) * num_tables
 
