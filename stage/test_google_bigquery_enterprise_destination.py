@@ -2295,9 +2295,9 @@ def test_gcp_write_records_on_error(sdc_builder, sdc_executor, gcp, on_error_rec
         dev_raw_data_source >> bigquery
     """
 
-    if on_record_error == 'STOP_PIPELINE':
+    if on_error_record == 'STOP_PIPELINE':
         start_and_check = start_pipeline_and_check_stopped
-    elif on_record_error == 'TO_ERROR':
+    elif on_error_record == 'TO_ERROR':
         start_and_check = start_pipeline_and_check_to_error
 
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
