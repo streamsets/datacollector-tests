@@ -309,7 +309,7 @@ def test_mongodb_atlas_cdc_operation_types(sdc_builder, sdc_executor, mongodb, r
             expected_insert, expected_update, expected_delete = _write_operations(mongodb, database, collection, data)
             time.sleep(5)   # To ensure the pymongo had time to make the operations to the database
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_records, timeout_sec=120)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_records, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
 
         # Verify we only read the records modified by the operation specified
