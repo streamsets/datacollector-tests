@@ -132,13 +132,18 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         if existing_column_name:
-            rows_from_wiretap = [{record.field['id']: record.field['LookupColumn']} for record in wiretap.output_records]
             # all fields are lookup, and removed by the lookup data
             expected_data = [{str(row['id']): lookup_data} for row in ROWS_IN_DATABASE]
+            if type(database) == OracleDatabase and column_type == 'Float':
+                rows_from_wiretap = [{record.field['id']: float(record.field['LookupColumn'].value)} for record in
+                                     wiretap.output_records]
+            else:
+                rows_from_wiretap = [{record.field['id']: record.field['LookupColumn']} for record in
+                                     wiretap.output_records]
             assert rows_from_wiretap == expected_data
         else:
             pytest.fail("Should not reach as Start Error should have been raised")
-    except sdk.exceptions.StartError as e:
+    except (sdk.exceptions.StartError, sdk.exceptions.StartingError) as e:
         if not existing_column_name:
             error_code = 'JDBC_95' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_33'
             assert error_code in str(e.args[0])
