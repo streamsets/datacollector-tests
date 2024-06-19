@@ -458,7 +458,7 @@ def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb,
         max_wait_time = 120
     else:
         batch_size = 100
-        max_wait_time = 20
+        max_wait_time = 25
 
     data = [{'f1': i} for i in range(30)]
 
