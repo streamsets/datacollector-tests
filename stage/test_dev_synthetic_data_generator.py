@@ -21,7 +21,7 @@ from streamsets.testframework.markers import sdc_min_version
 logger = logging.getLogger(__name__)
 
 
-@sdc_min_version('5.11.0')
+@sdc_min_version('6.0.0')
 def test_dev_synthetic_data_generator_field_generation_boolean(sdc_builder, sdc_executor):
     """Test synthetic_data_generator can generate boolean fields
     and an attribute is added to a record
@@ -55,7 +55,7 @@ def test_dev_synthetic_data_generator_field_generation_boolean(sdc_builder, sdc_
     assert len(output_records) == 100
 
 
-@sdc_min_version('5.11.0')
+@sdc_min_version('6.0.0')
 def test_dev_synthetic_data_generator_field_generation_integer(sdc_builder, sdc_executor):
     """Test synthetic_data_generator can generate an integer field
     which value is 1, batch size is 10 and maximum number of threads.
@@ -87,7 +87,7 @@ def test_dev_synthetic_data_generator_field_generation_integer(sdc_builder, sdc_
     assert len(output_records) == 100
 
 
-@sdc_min_version('5.11.0')
+@sdc_min_version('6.0.0')
 def test_dev_synthetic_data_generator_field_generation_long(sdc_builder, sdc_executor):
     """Test synthetic_data_generator can generate long field
 
@@ -119,7 +119,7 @@ def test_dev_synthetic_data_generator_field_generation_long(sdc_builder, sdc_exe
 
     assert len(output_records) == 100
 
-@sdc_min_version('5.11.0')
+@sdc_min_version('6.0.0')
 def test_dev_synthetic_data_generator_field_generation_email(sdc_builder, sdc_executor):
     """Test synthetic_data_generator can generate email values and
     events are generated and checked.
@@ -153,7 +153,7 @@ def test_dev_synthetic_data_generator_field_generation_email(sdc_builder, sdc_ex
     assert len(output_records) == 100
 
 
-@sdc_min_version('5.11.0')
+@sdc_min_version('6.0.0')
 def test_dev_synthetic_data_generator_events(sdc_builder, sdc_executor):
     """Test synthetic_data_generator can generate events
 
