@@ -559,6 +559,10 @@ def test_kafka_multiconsumer_null_message_key(sdc_builder, sdc_executor, cluster
     Kafka Multitopic Consumer Origin pipeline with standalone mode:
         kafka_multitopic_consumer >> wiretap.destination
     """
+    if any(stage_lib == 'streamsets-datacollector-apache-kafka_0_9-lib' in stage_lib
+           for stage_lib in cluster['sdc_stage_libs']):
+        pytest.skip('Test only designed to run on Kafka and versions > 0.9')
+
     message = json.dumps({'abc': '123'})
     expected_error_message = 'KAFKA_79 - Tombstone message: payload and message key are null'
 
@@ -574,7 +578,8 @@ def test_kafka_multiconsumer_null_message_key(sdc_builder, sdc_executor, cluster
 
     sdc_executor.add_pipeline(pipeline)
 
-    brokers = ','.join(cluster.kafka.brokers)
+    brokers = cluster.kafka.bootstrap_servers if isinstance(cluster, ClouderaManagerCluster)\
+        else ','.join(cluster.kafka.brokers)
     topic = kafka_multitopic_consumer.topic_list[0]
     logger.debug(f"topic: {topic}")
 
@@ -589,7 +594,7 @@ def test_kafka_multiconsumer_null_message_key(sdc_builder, sdc_executor, cluster
     assert 'kafkacat' not in install_response.stderr.rstrip(), f"Issues when running '{kafkacat_install_command}'"
     # 1.2. Produce the new message
     kafkacat_produce_command = f'echo ":" | kafkacat -b {brokers} -t {topic} -P -Z -K:'
-    produce_response = execute_shell_command(sdc_executor, kafkacat_produce_command)
+    produce_response = execute_shell_command(sdc_executor, kafkacat_produce_command, timeout_sec=180)
     # Check the message with null payload and null message key was sent successfully
     assert produce_response.stdout.rstrip() == '' and produce_response.stderr.rstrip() == '', \
         f"Issues when running '{kafkacat_produce_command}'"
@@ -784,7 +789,7 @@ def produce_kafka_messages_list(topic, cluster, message_list, data_format):
     producer.flush()
 
 
-def execute_shell_command(sdc_executor, command):
-    response = sdc_executor.execute_shell(command)
+def execute_shell_command(sdc_executor, command, timeout_sec=60):
+    response = sdc_executor.execute_shell(command, timeout_sec=timeout_sec)
     logger.debug(f"Output after executing '{command}' shell command: %s", response)
     return response
