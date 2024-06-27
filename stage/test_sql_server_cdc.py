@@ -1547,7 +1547,7 @@ def test_include_and_exclude_tables_with_special_names(
     included_table_names = [
         'USER',
         'TABLE',
-        'PROCEDURE'
+        'PROCEDURE',
         'Included !@#$%^&*()_+=-?<>',
     ]
     excluded_table_names = [
