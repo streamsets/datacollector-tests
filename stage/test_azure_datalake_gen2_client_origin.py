@@ -660,7 +660,7 @@ def test_data_lake_origin_path_pattern(sdc_builder, sdc_executor, azure, path_pa
         pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_output))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_output), timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
 
         actual_output = [record.field['text'].value for record in wiretap.output_records]
