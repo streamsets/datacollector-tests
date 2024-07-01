@@ -420,7 +420,7 @@ def test_kinesis_consumer_assume_role_with_external_id(sdc_builder, sdc_executor
 
 @aws('kinesis')
 @sdc_min_version('5.10.0')
-def test_kinesis_consumer_other_region_and_vpc_endpoint(sdc_builder, sdc_executor, aws):
+def test_kinesis_consumer_other_region_and_vpc_endpoint_only_for_kinesis_service(sdc_builder, sdc_executor, aws):
     """Test for Kinesis consumer origin stage using other as region and VPC endpoint. VPC endpoint allows the customer
     to privately connect to supported AWS services and VPC endpoint services. We do this by publishing data to
     a test stream using Kinesis client and having a pipeline which reads that data using Kinesis consumer origin stage.
@@ -457,7 +457,7 @@ def test_kinesis_consumer_other_region_and_vpc_endpoint(sdc_builder, sdc_executo
 
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
     kinesis_consumer.set_attributes(region='OTHER',
-                                    endpoint=vpc_endpoint,
+                                    assume_role=False,
                                     use_a_different_connection_for_dynamodb=True,
                                     use_a_different_connection_for_cloudwatch=True)
 
@@ -498,7 +498,7 @@ def test_kinesis_consumer_using_specific_connection_for_dynamodb_and_cloudwatch(
 
     The region is set to "OTHER", and the service vpc endpoint service is used for kinesis. VPC endpoint only
     works with Kinesis, not with DynamoDB or CloudWatch. We need to enable use different connection for DynamoDB and
-    CloudWatch and specify a new region set to "OTHER" and adding the corresponding endpoint.
+    CloudWatch and specify a new region set to "OTHER" and adding the corresponding endpoint for each service.
     Data is then asserted for what is published at Kinesis client and what we read in the pipeline.
 
     The pipeline looks like:
@@ -530,14 +530,12 @@ def test_kinesis_consumer_using_specific_connection_for_dynamodb_and_cloudwatch(
 
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
     kinesis_consumer.set_attributes(region='OTHER',
-                                    endpoint=vpc_endpoint,
+                                    assume_role=False,
                                     use_a_different_connection_for_dynamodb=True,
                                     dynamodb_region='OTHER',
-                                    dynamodb_endpoint=endpoint,
                                     use_a_different_connection_for_cloudwatch=True,
-                                    cloudwatch_region='OTHER',
-                                    cloudwatch_endpoint=endpoint)
-
+                                    cloudwatch_region='OTHER')
+    
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
     client = aws.kinesis
