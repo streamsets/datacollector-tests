@@ -108,12 +108,12 @@ def test_http_methods(sdc_builder, sdc_executor, cleanup, server, test_name, met
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(
-        data_format="JSON", stop_after_first_batch=True, raw_data=raw_data, per_status_actions=PER_STATUS_ACTIONS
+        data_format="JSON", stop_after_first_batch=True, raw_data=raw_data,
     )
 
     webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
     webclient_processor.set_attributes(
-        library=LIBRARY, request_endpoint=f"{server.url}/{endpoint.path}", method=method, output_field="/"
+        library=LIBRARY, request_endpoint=f"{server.url}/{endpoint.path}", method=method, output_field="/", per_status_actions=PER_STATUS_ACTIONS,
     )
     if body is not None:
         if body_expression is None:
