@@ -26,3 +26,4 @@ pretenders.log
 venv/*
 *.zip
 .benchmarks/*
+pyrightconfig.json
