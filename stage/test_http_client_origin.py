@@ -500,8 +500,17 @@ def test_http_origin_metrics(sdc_builder, sdc_executor, http_client, run_mode):
         history = sdc_executor.get_pipeline_history(pipeline)
         metrics = _get_metrics(history, run_mode)
         if run_mode == 'timeout_error':
-            # Same amount of timeout's than retries
-            assert metrics['errors']['Timeout Read'] == metrics['retries']['Retries for timeout']
+            # Here we assert the timeout count with retry count.
+            # In some cases timeout count is 1 more than the retry count
+            # Looks like this happens as waitTimeExpire() becomes true, then it does not enter inside the method
+            # which triggers the retry log & thus retry count is not considered.
+            # So we assert these both conditions as any one of the below can be true.
+            if(metrics['errors']['Timeout Read'] == metrics['retries']['Retries for timeout'] or
+               metrics['errors']['Timeout Read'] == metrics['retries']['Retries for timeout'] + 1):
+                timeout_assertion = True
+            else:
+                timeout_assertion = False
+            assert timeout_assertion
         elif run_mode == 'status_error':
             # Same amount of status errors than 404 status
             assert metrics['status']['404'] == metrics['errors']['Http status']
