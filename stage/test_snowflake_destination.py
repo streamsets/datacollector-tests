@@ -2786,8 +2786,7 @@ def test_cdc_snowflake_primary_key_information_from_snowflake_multithreaded(sdc_
 @snowflake
 @sdc_min_version('3.7.0')
 @sdc_enterprise_lib_min_version({'snowflake': '1.5.0'})
-@pytest.mark.parametrize('replicate_decimal_columns', [True, False])
-def test_datadrift_decimal_types(sdc_builder, sdc_executor, snowflake, replicate_decimal_columns):
+def test_datadrift_decimal_types(sdc_builder, sdc_executor, snowflake):
     """Test for Snowflake destination target stage.
     We insert a formal DECIMAL types using dev data generator with different precision and scale and we verify later
     on that the table looks like as we expected.
@@ -2826,8 +2825,7 @@ def test_datadrift_decimal_types(sdc_builder, sdc_executor, snowflake, replicate
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
                                          data_drift_enabled=True,
-                                         table_auto_create=True,
-                                         replicate_decimal_columns=replicate_decimal_columns)
+                                         table_auto_create=True)
     dev_data_generator >> snowflake_destination
 
     # Build first pipeline
@@ -2838,22 +2836,13 @@ def test_datadrift_decimal_types(sdc_builder, sdc_executor, snowflake, replicate
 
     try:
         table_def = engine.execute(f'describe table "{table_name}"')
-        if replicate_decimal_columns:
-            assert table_def.fetchall() == [
-                ('DECIMALFIELD', 'NUMBER(10,2)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD2', 'NUMBER(38,37)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD3', 'NUMBER(30,0)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD4', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD5', 'NUMBER(38,12)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD6', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None)]
-        else:
-            assert table_def.fetchall() == [
-                ('DECIMALFIELD', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD2', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD3', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD4', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD5', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
-                ('DECIMALFIELD6', 'FLOAT', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None)]
+        assert table_def.fetchall() == [
+            ('DECIMALFIELD', 'NUMBER(10,2)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+            ('DECIMALFIELD2', 'NUMBER(38,37)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+            ('DECIMALFIELD3', 'NUMBER(30,0)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+            ('DECIMALFIELD4', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+            ('DECIMALFIELD5', 'NUMBER(38,12)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None),
+            ('DECIMALFIELD6', 'NUMBER(22,21)', 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None, None)]
         table_def.close()
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
