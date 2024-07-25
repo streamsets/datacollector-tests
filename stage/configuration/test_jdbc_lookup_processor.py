@@ -21,6 +21,7 @@ import sqlalchemy
 from sqlalchemy.dialects import postgresql
 
 from streamsets import sdk
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, MySqlDatabase, \
@@ -234,6 +235,55 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+@sdc_min_version('6.0.0')
+@pytest.mark.parametrize('validate_query', [True, False])
+def test_validate_query(sdc_builder, sdc_executor, database, credential_store, validate_query):
+    """Test validate query
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database, None)
+
+    query_str = "this query is invalid"
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(LOOKUP_RAW_DATA),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=[],
+                               validate_query=validate_query)
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        if validate_query:
+            with pytest.raises(ValidationError) as error:
+                # Start error should be raised if the validate query flag is active since the query is not valid
+                sdc_executor.validate_pipeline(pipeline)
+
+                error_code = 'JDBC_INIT_58'
+                exception_message = error.value.issues['stageIssues'][jdbc_lookup.instance_name][0]['message']
+                assert f"{error_code} -" in exception_message
+        else:
+            # Pipeline validates normally
+            sdc_executor.validate_pipeline(pipeline)
+
+    finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
