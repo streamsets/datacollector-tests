@@ -240,7 +240,7 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
 
 
 @database
-@sdc_min_version('6.0.0')
+@sdc_min_version('5.12.0')
 @pytest.mark.parametrize('validate_query', [True, False])
 @pytest.mark.parametrize('invalid_query', [True, False])
 def test_validate_query(sdc_builder, sdc_executor, database, credential_store, validate_query, invalid_query):
