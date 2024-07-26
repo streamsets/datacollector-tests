@@ -242,7 +242,8 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
 @database
 @sdc_min_version('6.0.0')
 @pytest.mark.parametrize('validate_query', [True, False])
-def test_validate_query(sdc_builder, sdc_executor, database, credential_store, validate_query):
+@pytest.mark.parametrize('invalid_query', [True, False])
+def test_validate_query(sdc_builder, sdc_executor, database, credential_store, validate_query, invalid_query):
     """Test validate query
     The pipeline looks like:
         dev_raw_data_source >> jdbc_lookup >> trash
@@ -250,7 +251,10 @@ def test_validate_query(sdc_builder, sdc_executor, database, credential_store, v
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = _create_table(table_name, database, None)
 
-    query_str = "this query is invalid"
+    if invalid_query:
+        query_str = "this query is invalid"
+    else:
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = 1'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
@@ -271,7 +275,7 @@ def test_validate_query(sdc_builder, sdc_executor, database, credential_store, v
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        if validate_query:
+        if validate_query and invalid_query:
             with pytest.raises(ValidationError) as error:
                 # Start error should be raised if the validate query flag is active since the query is not valid
                 sdc_executor.validate_pipeline(pipeline)
