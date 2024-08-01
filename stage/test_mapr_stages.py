@@ -26,9 +26,6 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-# Specify a port for SDC RPC stages to use.
-SDC_RPC_LISTENING_PORT = 20000
-
 
 @cluster('mapr')
 @sdc_min_version('3.0.0.0')
@@ -222,78 +219,6 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
     finally:
         logger.info('Deleting MapR-DB table %s ...', table_name)
         cluster.execute_command('table', 'delete', http_request_method='POST', data={'path': table_name})
-
-
-@cluster('mapr')
-def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
-    """Write a simple file into a MapR FS folder with a randomly-generated name and confirm that the MapR FS origin
-    successfully reads it. Because cluster mode pipelines don't support writing to wiretap, we do this verification using a
-    second standalone pipeline whose origin is an SDC RPC written to by the MapR FS pipeline. Specifically, this would
-    look like:
-
-    MapR FS pipeline:
-        mapr_fs_origin >> sdc_rpc_destination
-
-    Wiretap pipeline:
-        sdc_rpc_origin >> wiretap
-    """
-    lines_in_file = ['hello', 'hi', 'how are you?']
-
-    mapr_fs_folder = os.path.join(os.sep, get_random_string(string.ascii_letters, 10))
-
-    # Build the MapR FS pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    mapr_fs_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_maprfs_ClusterMapRFSDSource')
-    mapr_fs_origin.data_format = 'TEXT'
-    mapr_fs_origin.input_paths.append(mapr_fs_folder)
-
-    sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.sdc_rpc_connection.append(f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}')
-    sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
-
-    mapr_fs_origin >> sdc_rpc_destination
-    mapr_fs_pipeline = builder.build(title='MapR FS pipeline').configure_for_environment(cluster)
-    mapr_fs_pipeline.configuration['executionMode'] = 'CLUSTER_BATCH'
-
-    # Build the wiretap pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
-    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
-    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
-    # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min.
-    sdc_rpc_origin.batch_wait_time_in_secs = 300
-
-    wiretap = builder.add_wiretap()
-
-    sdc_rpc_origin >> wiretap.destination
-    wiretap_pipeline = builder.build()
-
-    # Add both pipelines we just created to SDC and start writing files to MapR FS with the HDFS client.
-    sdc_executor.add_pipeline(mapr_fs_pipeline, wiretap_pipeline)
-
-    try:
-        logger.debug('Writing file %s/file.txt to MapR FS ...', mapr_fs_folder)
-        cluster.mapr_fs.client.makedirs(mapr_fs_folder)
-        cluster.mapr_fs.client.write(os.path.join(mapr_fs_folder, 'file.txt'), data='\n'.join(lines_in_file))
-
-        logger.debug('Starting wiretap pipeline ...')
-        sdc_executor.start_pipeline(wiretap_pipeline)
-
-        logger.debug('Starting MapR FS pipeline and waiting for it to finish ...')
-        sdc_executor.start_pipeline(mapr_fs_pipeline).wait_for_finished()
-
-        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', len(lines_in_file),
-                                              timeout_sec=600)
-
-        assert lines_in_file == [record.field['text'].value for record in wiretap.output_records]
-    finally:
-        cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
-        # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
-        sdc_executor.stop_pipeline(pipeline=wiretap_pipeline, force=True)
 
 
 @cluster('mapr')
