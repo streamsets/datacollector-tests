@@ -35,7 +35,6 @@ ONLY_JDK8_PIPELINES = [
     'sdc_1.1.0_pipeline_Dev_Data_Trash.json',
     'sdc_1.1.0_pipeline_HadoopFS_trash.json',
     'sdc_1.1.0_pipeline_Kafka_consumer_trash.json',
-    'sdc_1.1.0_pipeline_Omniture.json',
     'sdc_1.1.0_pipeline_Source_Destination.json',
     'sdc_1.6.0.0_pipeline_DevData_Trash.json',
     'sdc_1.6.0.0_pipeline_HadoopFS_Tarsh.json',
