@@ -143,7 +143,7 @@ def policy_write_builder(sdc_builder, sdc_executor):
     dev_data_generator >> expression_evaluator >> to_error
 
     error = builder.add_error_stage('Write to File')
-    error.directory = "/tmp/"
+    error.directory = tempfile.gettempdir()
 
     yield builder
 
@@ -158,7 +158,7 @@ def policy_read_builder(sdc_builder):
                           data_format='SDC_JSON',
                           file_name_pattern='sdc*.sdc',
                           file_post_processing='DELETE',
-                          files_directory='/tmp/',
+                          files_directory=tempfile.gettempdir(),
                           process_subdirectories=True)
 
     wiretap = builder.add_wiretap()
