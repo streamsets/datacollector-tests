@@ -29,8 +29,6 @@ logger = logging.getLogger(__name__)
 ERROR_CODE_STAGE_REQUIRED_FIELDS = 'CONTAINER_0050'
 # Stage precondition: CONTAINER_0051 - Unsatisfied precondition.
 ERROR_CODE_UNSATISFIED_PRECONDITION = 'CONTAINER_0051'
-# Port for SDC RPC stages to exchange error records
-SDC_RPC_LISTENING_PORT = 20000
 
 
 def test_error_records_stop_pipeline_on_required_field(random_expression_pipeline_builder, sdc_executor):
@@ -44,7 +42,7 @@ def test_error_records_stop_pipeline_on_required_field(random_expression_pipelin
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.dump_log_on_error = True
 
-    assert(ERROR_CODE_STAGE_REQUIRED_FIELDS in exception_info.value.message)
+    assert (ERROR_CODE_STAGE_REQUIRED_FIELDS in exception_info.value.message)
 
 
 def test_error_records_stop_pipeline_on_record_precondition(random_expression_pipeline_builder, sdc_executor):
@@ -58,7 +56,7 @@ def test_error_records_stop_pipeline_on_record_precondition(random_expression_pi
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.dump_log_on_error = True
 
-    assert(ERROR_CODE_UNSATISFIED_PRECONDITION in exception_info.value.message)
+    assert (ERROR_CODE_UNSATISFIED_PRECONDITION in exception_info.value.message)
 
 
 def test_error_records_to_error_on_required_field(random_expression_pipeline_builder, sdc_executor):
@@ -132,6 +130,9 @@ def policy_write_builder(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     dev_data_generator = builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=1,
+                                      records_to_be_generated=10,
+                                      delay_between_batches=1000)
 
     expression_evaluator = builder.add_stage('Expression Evaluator')
     expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'changed',
@@ -141,9 +142,8 @@ def policy_write_builder(sdc_builder, sdc_executor):
 
     dev_data_generator >> expression_evaluator >> to_error
 
-    error = builder.add_error_stage('Write to Another Pipeline')
-    error.sdc_rpc_connection = ['{}:{}'.format(sdc_executor.server_host, SDC_RPC_LISTENING_PORT)]
-    error.sdc_rpc_id = 'error_policy'
+    error = builder.add_error_stage('Write to File')
+    error.directory = "/tmp/"
 
     yield builder
 
@@ -152,9 +152,14 @@ def policy_write_builder(sdc_builder, sdc_executor):
 def policy_read_builder(sdc_builder):
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('SDC RPC', type='origin')
-    origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
-    origin.sdc_rpc_id = 'error_policy'
+    origin = builder.add_stage('Directory', type='origin')
+
+    origin.set_attributes(batch_wait_time_in_secs=1,
+                          data_format='SDC_JSON',
+                          file_name_pattern='sdc*.sdc',
+                          file_post_processing='DELETE',
+                          files_directory='/tmp/',
+                          process_subdirectories=True)
 
     wiretap = builder.add_wiretap()
 
@@ -179,20 +184,16 @@ def test_error_record_policy_original_record(policy_write_builder, policy_read_b
     write_pipeline.configuration['errorRecordPolicy'] = 'ORIGINAL_RECORD'
     sdc_executor.add_pipeline(write_pipeline, wiretap_pipeline)
 
-    try:
-        sdc_executor.start_pipeline(wiretap_pipeline)
+    sdc_executor.start_pipeline(wiretap_pipeline)
 
-        sdc_executor.start_pipeline(write_pipeline)
-        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 10)
-        sdc_executor.stop_pipeline(wiretap_pipeline)
+    sdc_executor.start_pipeline(write_pipeline).wait_for_finished()
+    sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 10)
+    sdc_executor.stop_pipeline(wiretap_pipeline)
 
-        record = wiretap.output_records[0]
-        # Expecting KeyError as the header shouldn't exist
-        with pytest.raises(KeyError):
-            record.header['values']['changed']
-
-    finally:
-        sdc_executor.stop_pipeline(write_pipeline)
+    record = wiretap.output_records[0]
+    # Expecting KeyError as the header shouldn't exist
+    with pytest.raises(KeyError):
+        record.header['values']['changed']
 
 
 def test_error_record_policy_stage_record(policy_write_builder, policy_read_builder, sdc_executor):
@@ -209,18 +210,15 @@ def test_error_record_policy_stage_record(policy_write_builder, policy_read_buil
 
     write_pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
     sdc_executor.add_pipeline(write_pipeline, wiretap_pipeline)
-    try:
-        sdc_executor.start_pipeline(wiretap_pipeline)
 
-        sdc_executor.start_pipeline(write_pipeline)
-        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 10)
-        sdc_executor.stop_pipeline(wiretap_pipeline)
+    sdc_executor.start_pipeline(wiretap_pipeline)
 
-        record = wiretap.output_records[0]
-        assert record.header['values']['changed'] == 'yes'
+    sdc_executor.start_pipeline(write_pipeline).wait_for_finished()
+    sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 10)
+    sdc_executor.stop_pipeline(wiretap_pipeline)
 
-    finally:
-        sdc_executor.stop_pipeline(write_pipeline)
+    record = wiretap.output_records[0]
+    assert record.header['values']['changed'] == 'yes'
 
 
 @pytest.mark.parametrize('error_directory_exists', [False, True])
@@ -294,7 +292,7 @@ def test_write_to_file_error_records_time_rotation(sdc_builder, sdc_executor):
     """
     directory_to_write = tempfile.gettempdir()
     files_prefix = f'sdc-{get_random_string(string.ascii_letters, 6)}'
-    error_record_files=directory_to_write+'/'+files_prefix+'*'
+    error_record_files = directory_to_write + '/' + files_prefix + '*'
     # with below setting, there should be more than one file generated
     file_wait_time_in_secs = "1"
 
@@ -306,7 +304,7 @@ def test_write_to_file_error_records_time_rotation(sdc_builder, sdc_executor):
                                  files_prefix=files_prefix)
 
     source = pipeline_builder.add_stage('Dev Random Record Source')
-    source.set_attributes(fields_to_generate = 'a,b', delay_between_batches = 1100)
+    source.set_attributes(fields_to_generate='a,b', delay_between_batches=1100)
 
     to_error = pipeline_builder.add_stage('To Error')
 
@@ -318,17 +316,17 @@ def test_write_to_file_error_records_time_rotation(sdc_builder, sdc_executor):
 
         # run error stage pipeline and wait till some errors are generated
         sdc_executor.start_pipeline(err_stage_pipeline)
-        sdc_executor.wait_for_pipeline_metric(err_stage_pipeline,'input_record_count', 4)
+        sdc_executor.wait_for_pipeline_metric(err_stage_pipeline, 'input_record_count', 4)
         sdc_executor.stop_pipeline(err_stage_pipeline)
 
-        #assert number of files generated
+        # assert number of files generated
         assert len(sorted(sdc_executor.execute_shell(f'ls {error_record_files}').stdout.split())) >= 2
     finally:
         if sdc_executor.get_pipeline_status(err_stage_pipeline).response.json().get('status') == 'RUNNING':
-           sdc_executor.stop_pipeline(err_stage_pipeline)
+            sdc_executor.stop_pipeline(err_stage_pipeline)
         sdc_executor.remove_pipeline(err_stage_pipeline)
 
-        #Clean up error record files created
+        # Clean up error record files created
         logger.info(f'Delete files with prefix {files_prefix} in {directory_to_write}...')
         sdc_executor.execute_shell(f'rm -f {error_record_files}')
 
@@ -340,7 +338,7 @@ def test_write_to_file_error_records_size_rotation(sdc_builder, sdc_executor):
     """
     directory_to_write = tempfile.gettempdir()
     files_prefix = f'sdc-{get_random_string(string.ascii_letters, 6)}'
-    error_record_files=directory_to_write+'/'+files_prefix+'*'
+    error_record_files = directory_to_write + '/' + files_prefix + '*'
     # with below setting, there should be more than one file generated
     max_file_size_in_mb = 3
 
@@ -352,7 +350,7 @@ def test_write_to_file_error_records_size_rotation(sdc_builder, sdc_executor):
                                  files_prefix=files_prefix)
 
     source = pipeline_builder.add_stage('Dev Random Record Source')
-    source.set_attributes(fields_to_generate = 'a,b', delay_between_batches = 1100)
+    source.set_attributes(fields_to_generate='a,b', delay_between_batches=1100)
 
     to_error = pipeline_builder.add_stage('To Error')
 
@@ -364,17 +362,17 @@ def test_write_to_file_error_records_size_rotation(sdc_builder, sdc_executor):
 
         # run error stage pipeline and wait till some errors are generated
         sdc_executor.start_pipeline(err_stage_pipeline)
-        sdc_executor.wait_for_pipeline_metric(err_stage_pipeline,'input_record_count', 5000)
+        sdc_executor.wait_for_pipeline_metric(err_stage_pipeline, 'input_record_count', 5000)
         sdc_executor.stop_pipeline(err_stage_pipeline)
 
-        #assert number of files generated
+        # assert number of files generated
         assert len(sorted(sdc_executor.execute_shell(f'ls {error_record_files}').stdout.split())) >= 2
     finally:
         if sdc_executor.get_pipeline_status(err_stage_pipeline).response.json().get('status') == 'RUNNING':
-           sdc_executor.stop_pipeline(err_stage_pipeline)
+            sdc_executor.stop_pipeline(err_stage_pipeline)
         sdc_executor.remove_pipeline(err_stage_pipeline)
 
-        #Clean up error record files created
+        # Clean up error record files created
         logger.info(f'Delete files with prefix {files_prefix} in {directory_to_write}...')
         sdc_executor.execute_shell(f'rm -f {error_record_files}')
 
@@ -386,7 +384,7 @@ def test_write_to_file_error_records_time_size_rotation(sdc_builder, sdc_executo
     """
     directory_to_write = tempfile.gettempdir()
     files_prefix = f'sdc-{get_random_string(string.ascii_letters, 6)}'
-    error_record_files=directory_to_write+'/'+files_prefix+'*'
+    error_record_files = directory_to_write + '/' + files_prefix + '*'
     # with below setting, there should be more than two file generated
     file_wait_time_in_secs = "2"
     max_file_size_in_mb = 3
@@ -395,12 +393,12 @@ def test_write_to_file_error_records_time_size_rotation(sdc_builder, sdc_executo
     pipeline_builder = sdc_builder.get_pipeline_builder()
     write_to_file = pipeline_builder.add_error_stage('Write to File')
     write_to_file.set_attributes(directory=directory_to_write,
-                                 file_wait_time_in_secs = file_wait_time_in_secs,
+                                 file_wait_time_in_secs=file_wait_time_in_secs,
                                  max_file_size_in_mb=max_file_size_in_mb,
                                  files_prefix=files_prefix)
 
     source = pipeline_builder.add_stage('Dev Random Record Source')
-    source.set_attributes(fields_to_generate = 'a,b', delay_between_batches = 1001)
+    source.set_attributes(fields_to_generate='a,b', delay_between_batches=1001)
 
     to_error = pipeline_builder.add_stage('To Error')
 
@@ -411,17 +409,17 @@ def test_write_to_file_error_records_time_size_rotation(sdc_builder, sdc_executo
 
         # run error stage pipeline and wait till some errors are generated
         sdc_executor.start_pipeline(err_stage_pipeline)
-        sdc_executor.wait_for_pipeline_metric(err_stage_pipeline,'input_record_count', 5000)
+        sdc_executor.wait_for_pipeline_metric(err_stage_pipeline, 'input_record_count', 5000)
         sdc_executor.stop_pipeline(err_stage_pipeline)
 
-        #assert number of files generated
+        # assert number of files generated
         assert len(sorted(sdc_executor.execute_shell(f'ls {error_record_files}').stdout.split())) > 2
     finally:
         if sdc_executor.get_pipeline_status(err_stage_pipeline).response.json().get('status') == 'RUNNING':
-           sdc_executor.stop_pipeline(err_stage_pipeline)
+            sdc_executor.stop_pipeline(err_stage_pipeline)
         sdc_executor.remove_pipeline(err_stage_pipeline)
 
-        #Clean up error record files created
+        # Clean up error record files created
         logger.info(f'Delete files with prefix {files_prefix} in {directory_to_write}...')
         sdc_executor.execute_shell(f'rm -f {error_record_files}')
 
