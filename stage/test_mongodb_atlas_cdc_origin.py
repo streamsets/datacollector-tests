@@ -513,6 +513,101 @@ def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb,
         mongodb.engine.drop_database(database)
 
 
+@sdc_min_version('6.0.0')
+@pytest.mark.parametrize('read_changes_from', [
+    'CHANGE_STREAM',
+    'OPLOG'
+])
+def test_mongodb_atlas_cdc_origin_replace(sdc_builder, sdc_executor, mongodb, read_changes_from):
+    """
+    Update and replace two different documents inserted previously in MongoDB Atlas. Read only the record replaced in a 
+    collection using Change Stream and Oplog, and confirm that MongoDB Atlas CDC origin read it.
+
+    The pipeline looks like:
+        mongodb_atlas_cdc_origin >> wiretap
+    """
+    if read_changes_from == 'CHANGE_STREAM' and mongodb.version[0] < 4:
+        pytest.skip("Initial offset in CHANGE STREAM mode is supported only by MongoDB 4.0 or newer")
+
+    database = get_random_string(string.ascii_letters, 5)
+    collection = get_random_string(string.ascii_letters, 5)
+    operation = 'REPLACE'
+
+    data = [{'f1': i, 'f2': get_random_string(string.ascii_letters, 4), 'f3': get_random_string(string.ascii_letters, 2)} for i in range(3)]
+    expected_data = {'f1': 1, 'f2':'Replaced'}
+    _write_in_mongodb_atlas(mongodb, database, collection, data)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_cdc_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_CDC_ORIGIN)
+    mongodb_atlas_cdc_origin.set_attributes(read_changes_from=read_changes_from,
+                                            operation_types=[operation],
+                                            get_full_record_for_updates=True,
+                                            include_namespaces=[f'{database}.{collection}'])
+
+    # Configure MongoDB Atlas CDC to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_cdc_origin.tls_mode = 'NONE'
+        mongodb_atlas_cdc_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    mongodb_atlas_cdc_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build(title=f'Test MongoDB Atlas CDC - Replace [read_change_from={read_changes_from}]')\
+        .configure_for_environment(mongodb)
+
+    try:
+        if read_changes_from == 'OPLOG':
+            # UPDATE a document
+            mongodb_database = mongodb.engine[database]
+            mongodb_collection = mongodb_database[collection]
+            update_filter = {'f1': 0}
+            new_value = {"$set": {'f2': 'Updated'}}
+            mongodb_collection.update_one(update_filter, new_value)
+
+            # REPLACE a document
+            mongodb_database = mongodb.engine[database]
+            mongodb_collection = mongodb_database[collection]
+            replace_filter = {'f1': 1}
+            new_value = copy.deepcopy(expected_data)
+            mongodb_collection.replace_one(replace_filter, new_value)
+
+        # Start pipeline and verify the documents using wiretap.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        if read_changes_from == 'CHANGE_STREAM':
+            # UPDATE a document
+            mongodb_database = mongodb.engine[database]
+            mongodb_collection = mongodb_database[collection]
+            update_filter = {'f1': 0}
+            new_value = {"$set": {'f2': 'Updated'}}
+            mongodb_collection.update_one(update_filter, new_value)
+
+            # REPLACE a document
+            mongodb_database = mongodb.engine[database]
+            mongodb_collection = mongodb_database[collection]
+            replace_filter = {'f1': 1}
+            new_value = copy.deepcopy(expected_data)
+            mongodb_collection.replace_one(replace_filter, new_value)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify we only read the records insert after the offset value
+        records = wiretap.output_records
+        assert len(records) == 1
+        records = [{'f1': r.field['f1'], 'f2': r.field['f2']} for r in records]
+        # Assert replace record
+        assert records[0] == expected_data
+
+    finally:
+        logger.info('Dropping %s database...', database)
+        mongodb.engine.drop_database(database)
+
+
 def _write_operations(mongodb, database, collection, data):
     # Insert data into the database
     _write_in_mongodb_atlas(mongodb, database, collection, data)
