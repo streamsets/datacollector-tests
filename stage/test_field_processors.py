@@ -1676,65 +1676,6 @@ def test_field_zip_fields_to_zip(sdc_builder, sdc_executor, first_field, second_
         sdc_executor.remove_pipeline(pipeline)
 
 
-def test_value_replacer(sdc_builder, sdc_executor):
-    """Test Value Replacer processor replacing values in fields. The pipeline would look like:
-
-        dev_raw_data_source >> value_replacer >> wiretap
-    """
-    expected_password_value = 'mysecretcode'
-    expected_state_value = 'NC'
-    raw_data = """
-        {
-          "contact": {
-             "fname": "Jane",
-             "lname": "Smith",
-             "id": 557,
-             "address": {
-               "home": {
-                 "state": "North Carolina",
-                 "zipcode": "27023"
-                }
-              },
-              "password": null,
-              "state": null
-          }
-        }
-    """
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
-    value_replacer = pipeline_builder.add_stage('Value Replacer', type='processor')
-    value_replacer.set_attributes(conditionally_replace_values=[{
-        'fieldNames': ['/contact/address/home/state', '/contact/state'],
-        'operator': 'ALL',
-        'comparisonValue': 'North Carolina',
-        'replacementValue': expected_state_value
-    }], replace_null_values=[{
-        'fields': ['/contact/password'],
-        'newValue': expected_password_value
-    }], fields_to_null=[{
-        'fieldsToNull': ['/contact/*name'],
-        'condition': "${record:value('/contact/id') > 0}"
-    }])
-    wiretap = pipeline_builder.add_wiretap()
-
-    dev_raw_data_source >> value_replacer >> wiretap.destination
-
-    pipeline = pipeline_builder.build('Value Replacer pipeline')
-    sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-    new_value = wiretap.output_records[0].field['contact']
-    # assert fields to null
-    assert new_value['fname'].value is new_value['lname'].value is None
-    # assert replace null values
-    assert expected_password_value == new_value['password'].value
-    # assert conditionally replace values
-    assert expected_state_value == new_value['state'].value
-    assert expected_state_value == new_value['address']['home']['state'].value
-
-
 @sdc_min_version('3.8.0')
 def test_field_mapper_self_referencing_expression(sdc_builder, sdc_executor):
     """

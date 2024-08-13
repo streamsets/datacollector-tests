@@ -59,10 +59,6 @@ def test_many_field_processor_stages(sdc_builder, sdc_executor):
     field_remover = pipeline_builder.add_stage('Field Remover')
     field_remover.set_attributes(fields=['/second/f'], action='REMOVE')
 
-    value_replacer = pipeline_builder.add_stage('Value Replacer', type='processor')
-    value_replacer.set_attributes(replace_null_values=[{'fields': ['/*/*/*2'],
-                                                        'newValue': '42.0'}])
-
     field_type_converter = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter.set_attributes(conversion_method='BY_FIELD',
                                         field_type_converter_configs=[{'fields': ['/*/*/*2'],

@@ -163,9 +163,15 @@ def test_null_fields(sdc_builder, sdc_executor, cluster):
 
     dev_data_generator.fields_to_generate = DEV_DATA_GEN_FIELD_LIST
 
-    field_value_replacer = pipeline_builder.add_stage('Value Replacer')
-    field_value_replacer.fields_to_null = [{'fieldsToNull': ['/' + field_and_type_info['field']
-                                                             for field_and_type_info in DEV_DATA_GEN_FIELD_LIST]}]
+    field_value_replacer = pipeline_builder.add_stage('Field Replacer')
+    field_value_replacer.replacement_rules = [{'setToNull': True, 'fields': '/stringField'},
+                                              {'setToNull': True, 'fields': '/intField'},
+                                              {'setToNull': True, 'fields': '/longField'},
+                                              {'setToNull': True, 'fields': '/floatField'},
+                                              {'setToNull': True, 'fields': '/doubleField'},
+                                              {'setToNull': True, 'fields': '/dateField'},
+                                              {'setToNull': True, 'fields': '/decimalField'},
+                                              ]
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
     hive_metadata.set_attributes(data_format='AVRO', database_expression='default',
                                  partition_configuration=[],
