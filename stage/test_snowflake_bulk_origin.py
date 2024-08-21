@@ -951,8 +951,12 @@ def test_wrong_warehouse_database_schema(sdc_builder, sdc_executor, snowflake, w
         create_table_and_insert_values(engine, table_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
         sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
     except (StartError, StartingError) as e:
-        assert 'SNOWFLAKE_16' in e.message
-        assert wrong_object.lower() in e.message
+            if Version(sdc_executor.version) >= Version('6.0.0'):
+                assert 'SNOWFLAKE_122' in e.message
+                assert wrong_object in e.message
+            else:
+                assert 'SNOWFLAKE_16' in e.message
+                assert wrong_object.lower() in e.message
     else:
         pytest.fail('Expected SNOWFLAKE_016 error during start of the pipeline.')
     finally:

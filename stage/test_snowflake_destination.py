@@ -304,8 +304,12 @@ def test_wrong_warehouse_database_schema(sdc_builder, sdc_executor, snowflake, w
     try:
         sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
     except (StartError, StartingError) as e:
-        assert 'SNOWFLAKE_16' in e.message
-        assert wrong_object.lower() in e.message
+        if Version(sdc_executor.version) >= Version('6.0.0'):
+            assert 'SNOWFLAKE_122' in e.message
+            assert wrong_object in e.message
+        else:
+            assert 'SNOWFLAKE_16' in e.message
+            assert wrong_object.lower() in e.message
     else:
         pytest.fail('Expected SNOWFLAKE_016 error during start of the pipeline.')
     finally:
@@ -1938,15 +1942,18 @@ def test_table_el_eval_not_created(sdc_builder, sdc_executor, snowflake):
 
         # 4 good records and 4 bad records as table_2 never existed
         assert 8 == len(wiretap.output_records)
-        assert 4 == len(wiretap.error_records)
+        error_records = wiretap.error_records
+        assert 4 == len(error_records)
 
         result = engine.execute(table_1.select())
         data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
         result.close()
         assert len(data_from_database) == 4
 
-        for error_record in wiretap.error_records:
-            if Version(sdc_executor.version) >= Version('5.10.0'):
+        for error_record in error_records:
+            if Version(sdc_executor.version) >= Version('6.0.0'):
+                assert 'SNOWFLAKE_90' == error_record.header['errorCode']
+            elif Version(sdc_executor.version) >= Version('5.10.0'):
                 assert 'DATA_LOADING_20' == error_record.header['errorCode']
             else:
                 assert 'SNOWFLAKE_61' == error_record.header['errorCode']
@@ -3260,7 +3267,10 @@ def test_snowflake_use_custom_role(sdc_builder, sdc_executor, snowflake, role):
             assert data_from_database == [(row['name'], row['id']) for row in ROWS_IN_DATABASE]
     except Exception as error:
         if role == 'PUBLIC':
-            assert 'SNOWFLAKE_16' in error.message
+            if Version(sdc_executor.version) >= Version('6.0.0'):
+                assert 'SNOWFLAKE_122' in error.message
+            else:
+                assert 'SNOWFLAKE_16' in error.message
         else:
             pytest.fail(error.message)
     finally:
