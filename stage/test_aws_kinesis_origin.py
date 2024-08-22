@@ -18,7 +18,7 @@ import time
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version, emr_external_id
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +333,10 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
     kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
                                     initial_position='TRIM_HORIZON',
                                     stream_name=stream_name)
+
+    if Version(sdc_builder.version) >= Version("5.10.0"):
+        kinesis_consumer.set_attributes(use_a_different_connection_for_dynamodb=True,
+                                        use_a_different_connection_for_cloudwatch=True)
 
     wiretap = builder.add_wiretap()
     kinesis_consumer >> wiretap.destination
