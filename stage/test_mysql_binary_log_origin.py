@@ -1423,7 +1423,7 @@ def test_mysql_binary_log_loaded_metadata_tables(sdc_builder, sdc_executor, data
         for table in tables:
             connection.execute(table.insert(), {'id': 1, 'number1': 1, 'number2': 1, 'number3': 1})
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', len(tables))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(tables))
         sdc_executor.stop_pipeline(pipeline)
 
         assert len(tables) == len(wiretap.output_records)
