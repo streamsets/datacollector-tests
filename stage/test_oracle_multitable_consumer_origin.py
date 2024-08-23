@@ -1410,13 +1410,13 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
         database_finished = False
         for record in event_wiretap.output_records:
             if record.header['values']['sdc.event.type'] == 'table-finished':
-                assert record.field['table'].value.lower() in table_names
+                assert record.field['table'].value in table_names
                 finished_tables.add(record.field['table'])
             elif record.header['values']['sdc.event.type'] == 'schema-finished':
                 assert len(schema_finished_tables) == 0
                 assert len(record.field['tables']) == len(table_names)
                 for table in record.field['tables']:
-                    assert table.value.lower() in table_names
+                    assert table.value in table_names
                     schema_finished_tables.add(table)
 
             elif record.header['values']['sdc.event.type'] == 'no-more-data':
@@ -1433,7 +1433,9 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
         if pipeline is not None:
             sdc_executor.stop_pipeline(pipeline)
         # for table in tables:
-            table.drop(database.engine)
+        if tables:
+            for table in tables:
+                table.drop(database.engine)
         if connection is not None:
             connection.close()
 
