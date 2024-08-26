@@ -15,7 +15,10 @@
 
 import pytest
 from streamsets.testframework.markers import sdc_min_version, web_client
+from streamsets.sdk.exceptions import RunError
 
+from stage import _wait_for_pipeline_statuses
+from stage.test_webclient_origin import per_status_action_parameters
 from stage.utils.webclient import (
     deps,
     free_port,
@@ -284,3 +287,108 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     cleanup(handler.stop_work, work)
     handler.start_work(work)
     handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+
+@sdc_min_version("5.11.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, success, hits, err",
+    per_status_action_parameters
+)
+def test_per_status_actions( sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status,
+                             success, hits, err, constant_retry=False):
+
+    from flask import json, Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response('{"Hello": "World"}', status=status, mimetype="application/json")
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON", stop_after_first_batch=True, raw_data=json.dumps({"field1": 10})
+    )
+
+    webclient_destination = pipeline_builder.add_stage(WEB_CLIENT, type="destination")
+    webclient_destination.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint.recv_url(),
+        per_status_actions=per_status_actions,
+    )
+
+    dev_raw_data_source >> webclient_destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    if success:
+        cleanup(handler.stop_work, work)
+        handler.start_work(work)
+        _wait_for_pipeline_statuses(sdc_executor, pipeline, ["FINISHED"])
+        history = sdc_executor.get_pipeline_history(pipeline)
+        if constant_retry:
+            assert history.latest.metrics.counter('stage.WebClient_01.outputRecords.counter').count == 0
+            assert history.latest.metrics.counter('stage.WebClient_01.errorRecords.counter').count == 1
+        else:
+            assert history.latest.metrics.counter('stage.WebClient_01.outputRecords.counter').count == 1
+            assert history.latest.metrics.counter('stage.WebClient_01.errorRecords.counter').count == 0
+    else:
+        with pytest.raises(RunError) as exception_info:
+            handler.start_work(work)
+            handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+        assert err in exception_info.value.message
+
+
+@sdc_min_version("6.0.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, success, hits, err",
+    [
+        [  # INT-3079. Testing the Case in Case of Bad Request Response
+            [
+                {
+                    "codes": ["HTTP_201", "HTTP_202", "Successful"],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 5,
+                    "failure": "Error",
+                },
+                {
+                    "codes": ["Default"],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 5,
+                    "failure": "Error",
+                },
+            ], 400, True, 1, None,
+        ],
+        [  # INT-3079. Testing the Case in Case of Success Response
+            [
+                {
+                    "codes": ["HTTP_201", "HTTP_202", "Successful"],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 5,
+                    "failure": "Error",
+                },
+                {
+                    "codes": ["Default"],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 5,
+                    "failure": "Error",
+                },
+            ], 200, True, 1, None,
+        ]
+    ]
+)
+def test_per_status_actions_constant_retry(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err
+):
+
+    test_per_status_actions(sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err, True)

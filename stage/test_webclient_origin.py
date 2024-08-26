@@ -885,86 +885,89 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     assert success_message == output_records[0].field
 
 
+per_status_action_parameters = [
+    [
+        [  # Test groups.
+            {
+                "codes": ["Successful"],
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 3,
+                "failure": "Abort",
+            },
+            {
+                "codes": ["Default"],
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 3,
+                "failure": "Abort",
+            },
+        ],
+        200, True, 1, None,
+    ],
+    [
+        [  # Test another group..
+            {
+                "codes": ["ClientError"],
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 3,
+                "failure": "Abort",
+            },
+            {
+                "codes": ["Default"],
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 3,
+                "failure": "Abort",
+            },
+        ],
+        400, True, 1, None,
+    ],
+    [  # Test individual behaviours
+        [
+            {
+                "codes": ["HTTP_400"],
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 3,
+                "failure": "Abort",
+            },
+            {
+                "codes": ["Default"],
+                "action": "Abort",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 3,
+                "failure": "Abort",
+            },
+        ],
+        400, True, 1, None,
+    ],
+    [  # Test abort.
+        [
+            {
+                "codes": ["HTTP_200"],
+                "action": "Abort",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 0,
+                "failure": "Abort",
+            },
+            {
+                "codes": ["Default"],
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 3,
+                "failure": "Abort",
+            },
+        ], 200, False, 1, "WEB_CLIENT_RUNTIME_0069",
+    ],
+]
+
+
 @sdc_min_version("5.11.0")
 @pytest.mark.parametrize(
     "per_status_actions, status, success, hits, err",
-    [
-        [
-            [  # Test groups.
-                {
-                    "codes": ["Successful"],
-                    "action": "Record",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 3,
-                    "failure": "Abort",
-                },
-                {
-                    "codes": ["Default"],
-                    "action": "ConstantRetry",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 3,
-                    "failure": "Abort",
-                },
-            ],
-            200, True, 1, None,
-        ],
-        [
-            [  # Test another group..
-                {
-                    "codes": ["ClientError"],
-                    "action": "Record",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 3,
-                    "failure": "Abort",
-                },
-                {
-                    "codes": ["Default"],
-                    "action": "ConstantRetry",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 3,
-                    "failure": "Abort",
-                },
-            ],
-            400, True, 1, None,
-        ],
-        [  # Test individual behaviours
-            [
-                {
-                    "codes": ["HTTP_400"],
-                    "action": "Record",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 3,
-                    "failure": "Abort",
-                },
-                {
-                    "codes": ["Default"],
-                    "action": "Abort",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 3,
-                    "failure": "Abort",
-                },
-            ],
-            400, True, 1, None,
-        ],
-        [  # Test abort.
-            [
-                {
-                    "codes": ["HTTP_200"],
-                    "action": "Abort",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 0,
-                    "failure": "Abort",
-                },
-                {
-                    "codes": ["Default"],
-                    "action": "Record",
-                    "backoff": "${unit:toMilliseconds(1, second)}",
-                    "retries": 3,
-                    "failure": "Abort",
-                },
-            ], 200, False, 1, "WEB_CLIENT_RUNTIME_0069",
-        ],
-    ],
+    per_status_action_parameters
 )
 def test_per_status_actions(
     sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err
@@ -1008,3 +1011,90 @@ def test_per_status_actions(
             handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
         assert err in exception_info.value.message
 
+
+constant_retry_parameters = [
+    [  # INT-3079. Testing the Case in Case of Bad Request Response
+        [
+            {
+                "codes": ["HTTP_201", "HTTP_202", "Successful"],
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error",
+            },
+            {
+                "codes": ["Default"],
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error",
+            },
+        ], 400, 1, None,
+    ],
+    [  # INT-3079. Testing the Case in Case of Success Response
+        [
+            {
+                "codes": ["HTTP_201", "HTTP_202", "Successful"],
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error",
+            },
+            {
+                "codes": ["Default"],
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error",
+            },
+        ], 200, 1, None,
+    ]
+]
+
+
+@sdc_min_version("6.0.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, hits, err",
+    constant_retry_parameters
+)
+def test_per_status_actions_constant_retry(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, hits, err
+):
+
+    from flask import json, Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response('{"Hello": "World"}', status=status, mimetype="application/json")
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint.recv_url(),
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        per_status_actions=per_status_actions,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", hits, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    assert 0 == len(wiretap.output_records)
+    error_records = wiretap.error_records
+    assert 1 == len(error_records)
+    for error_record in error_records:
+        assert error_record.header._data.get("errorMessage").startswith("WEB_CLIENT_RUNTIME_0067"), \
+        f'WEB_CLIENT_RUNTIME_0067 was expected instead it failed with {error_records[0].header._data.get("errorCode")}'

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import time
 from google.cloud.bigquery import Table
 
 logger = logging.getLogger(__name__)
@@ -65,3 +66,35 @@ def _bigquery_create_table(bigquery_client, dataset_ref, dataset_name, table_nam
     table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=table_schema))
     logger.info(f'Dataset {dataset_name} and table {table_name} created successfully')
     return table
+
+
+def _wait_for_pipeline_statuses(sdc_executor, pipeline, statuses, timeout_sec=200):
+    """Block until a pipeline reaches a status included in the list of desired status.
+
+    Args:
+        pipeline (:py:class:`streamsets.sdk.sdc_models.Pipeline`): The pipeline instance.
+        status (:py:obj:`list`): The desired list of status to wait for.
+        timeout_sec (:obj:`int`, optional): Timeout to wait for ``pipeline`` to reach ``status``, in seconds.
+            Default: :py:const:`streamsets.sdk.sdc.DEFAULT_WAIT_FOR_STATUS_TIMEOUT`.
+
+    Raises:
+        TimeoutError: If ``timeout_sec`` passes without ``pipeline`` reaching ``status``.
+    """
+    logger.info('Waiting for pipeline to reach status %s ...', statuses)
+    start_waiting_time = time.time()
+    stop_waiting_time = start_waiting_time + timeout_sec
+
+    while time.time() < stop_waiting_time:
+        current_status = sdc_executor.get_pipeline_status(pipeline).response.json()['status']
+        logger.debug('Pipeline has current status %s ...', current_status)
+        if current_status in statuses:
+            logger.info('Pipeline (%s) reached status %s (took %.2f s).',
+                        pipeline.id,
+                        current_status,
+                        time.time() - start_waiting_time)
+            break
+        time.sleep(1)
+    else:
+        # We got out of the loop and did not get the status we were waiting for.
+        raise TimeoutError('Pipeline did not reach status {} '
+                           'after {} s (current status {})'.format(status, timeout_sec, current_status))

@@ -14,7 +14,10 @@
 # limitations under the License.
 import pytest
 from streamsets.testframework.markers import sdc_min_version, web_client
+from streamsets.sdk.exceptions import RunError
 
+from stage import _wait_for_pipeline_statuses
+from stage.test_webclient_origin import constant_retry_parameters, per_status_action_parameters
 from stage.utils.webclient import (
     deps,
     free_port,
@@ -478,3 +481,113 @@ def test_endpoint_evaluation(sdc_builder, sdc_executor, cleanup, server, test_na
     logger.error(output_records[0].field.get('field1'))
     assert output_records[0].field.get('field1').value == field_value
     assert output_records[0].field.get('field2') == {"Hello": "World"}
+
+
+@sdc_min_version("5.11.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, success, hits, err",
+    per_status_action_parameters
+)
+def test_per_status_actions(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err
+):
+
+    from flask import json, Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response('{"Hello": "World"}', status=status, mimetype="application/json")
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    endpoint_id = randint(0, 10000)
+    field_value = 10
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON", stop_after_first_batch=True, raw_data=json.dumps({"field1": field_value, "endpoint_id": endpoint_id})
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint.recv_url(),
+        output_field="/field1",
+        per_status_actions=per_status_actions,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    if success:
+        cleanup(handler.stop_work, work)
+        handler.start_work(work)
+        output_records = wiretap.output_records
+        assert 1 == len(output_records)
+        assert {"Hello": "World"} == output_records[0].field.get('field1')
+    else:
+        with pytest.raises(RunError) as exception_info:
+            handler.start_work(work)
+            handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+        assert err in exception_info.value.message
+
+
+@sdc_min_version("6.0.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, hits, err",
+    constant_retry_parameters
+)
+def test_per_status_actions_constant_retry(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, hits, err
+):
+
+    from flask import json, Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response('{"Hello": "World"}', status=status, mimetype="application/json")
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    endpoint_id = randint(0, 10000)
+    field_value = 10
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON", stop_after_first_batch=True, raw_data=json.dumps({"field1": field_value, "endpoint_id": endpoint_id})
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint.recv_url(),
+        output_field="/field1",
+        per_status_actions=per_status_actions,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    _wait_for_pipeline_statuses(sdc_executor, pipeline, ["FINISHED"])
+    assert 0 == len(wiretap.output_records)
+    error_records = wiretap.error_records
+    assert 1 == len(error_records)
+    for error_record in error_records:
+        assert error_record.header._data.get("errorMessage").startswith("WEB_CLIENT_RUNTIME_0067"), \
+            f'WEB_CLIENT_RUNTIME_0067 was expected instead it failed with {error_records[0].header._data.get("errorCode")}'
