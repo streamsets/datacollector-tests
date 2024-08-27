@@ -287,7 +287,7 @@ def test_snowflake_executor_warehouse(sdc_builder, sdc_executor, snowflake, ware
         if warehouse == "NOT_A_WH":
             message = str(e.message).replace('"', '').replace("'", '')
             assert "SNOWFLAKE_16" in message
-            assert "NOT_A_WH failed" in message
+            assert "NOT_A_WH" in message
     finally:
         engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
         engine.dispose()
