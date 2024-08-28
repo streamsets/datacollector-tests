@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import copy
+import json
 import math
 import pytest
 import logging
 import string
 
-from streamsets.sdk.exceptions import StartError, StartingError
+from streamsets.sdk.exceptions import StartError, StartingError, RunError, RunningError
 from streamsets.sdk.utils import get_random_string, Version
 from streamsets.testframework.markers import snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -1086,6 +1087,206 @@ def test_purge_staging_file(sdc_builder, sdc_executor, snowflake, stage_location
             assert 0 == len(staged_files)
         else:
             assert 1 == len(staged_files)
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
+@sdc_min_version('6.0.0')
+@pytest.mark.parametrize('max_columns, num_columns', [(3, 2), (3, 5), (3, 3), (512, 3), (1024, 3)])
+def test_max_columns_property(sdc_builder, sdc_executor, snowflake, max_columns, num_columns):
+    """
+    Tests that the Snowflake Bulk Origin can configure the maximum amount of columns to be read.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location="INTERNAL")
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(
+        stage_location='INTERNAL',
+        snowflake_stage_name=stage_name,
+        **{get_table_config_arg_name(sdc_builder.version): [{'inclusionPattern': table_name}]},
+        purge_stage_file_after_ingesting=True,
+        max_columns=max_columns
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    columns = [{'name': f'COL_{i}', 'type': 'NUMBER'} for i in range(num_columns)]
+    column_names = [columns[i]['name'] for i in range(num_columns)]
+    inserted_records = [(1,) * num_columns, (2,) * num_columns]
+
+    try:
+        create_table_and_insert_values(engine, table_name, columns, inserted_records)
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        assert max_columns >= num_columns, 'An exception should have been thrown when using more columns than allowed'
+
+        output_records = wiretap.output_records
+        assert len(inserted_records) == len(output_records), \
+            f'{len(inserted_records)} records should have been processed but only {len(output_records)} were found'
+
+        for output_record, inserted_record in zip(output_records, inserted_records):
+            assert output_record.header.values[DATABASE_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_DATABASE
+            assert output_record.header.values[SCHEMA_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_SCHEMA
+            assert output_record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME] == table_name
+            assert len(output_record.value['value']) == num_columns, \
+                f'Expected the record to have {num_columns} columns, but {output_record.size} were found'
+
+            for i in range(0, num_columns):
+                # Check that each row has the needed columns ...
+                assert column_names[i] in output_record.field,\
+                    f'The record should have a column named {column_names[i]}'
+                # ... and that the value contained is what we expect
+                assert inserted_record[i] == output_record.field[column_names[i]], \
+                    f'The value of the field {column_names[i]} should have been {inserted_record},' \
+                    f' but it is {output_record.field[column_names[i]]}'
+    except (RunError, RunningError) as e:
+        assert max_columns < num_columns, \
+            'No exceptions should have been thrown when using less columns than the maximum amount defined'
+
+        response = sdc_executor.get_pipeline_status(pipeline).response.json()
+        status = response.get('status')
+        logger.info('Pipeline status %s ...', status)
+        assert 'DATA_LOADING_46' in e.message
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
+@sdc_min_version('6.0.0')
+@pytest.mark.parametrize('read_values_as_string', [True, False])
+@pytest.mark.parametrize(
+    'max_chars_per_column, variant_length',
+    [(4096, 512), (1024, 1024), (1024, 2048), (4096, 10000), (15000, 10000)]
+)
+def test_max_chars_per_column_property(
+        sdc_builder,
+        sdc_executor,
+        snowflake,
+        read_values_as_string,
+        max_chars_per_column,
+        variant_length
+):
+    """
+    Tests that the Snowflake Bulk Origin correctly long variant values of over 10000 chars when defining properly the
+    Max Characters per Column property.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location='INTERNAL')
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(
+        stage_location='INTERNAL',
+        snowflake_stage_name=stage_name,
+        read_values_as_string=read_values_as_string,
+        max_characters_per_column=max_chars_per_column
+    )
+
+    snowflake_origin.set_attributes(table_or_view_configuration=[{'inclusionPattern': table_name}])
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    column_name = 'LONG_VALUE'
+    columns = [{'name': column_name, 'type': 'VARIANT', 'primary_key': True}]
+    inserted_records = [
+        '{' +
+            '"Array":[1,2,3],' +
+            '"Boolean":true,' +
+            '"Null":null,' +
+            '"Number":123,' +
+            '"Object":{"a":"b","c":"d"},' +
+            f'"String":"{get_random_string(string.ascii_uppercase, variant_length)}"' +
+        '}',
+        '{'
+            '"Array":[],' +
+            '"Boolean":false,' +
+            '"Null":null,' +
+            '"Number":0,' +
+            '"Object":{"e":"f"},' +
+            f'"String":"{get_random_string(string.ascii_uppercase, 20)}"' +
+        '}'
+    ]
+
+    try:
+        column_names, column_definitions, primary_keys_clause = get_columns_information(columns)
+        create_table(engine, table_name, column_definitions, primary_keys_clause)
+        for output_record in inserted_records:
+            engine.execute(
+                f'insert into {table_name} ' +
+                f'select parse_json(column1) as {column_name} ' +
+                f'from values (\'{output_record}\')'
+            )
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        assert max_chars_per_column >= len(inserted_records[0]), \
+            (f'An error should have occurred as the max amount of chars is {max_chars_per_column} but the record '
+             f'has {len(inserted_records[0])}')
+
+        output_records = wiretap.output_records
+
+        # Check that the number of records is equal to what we expect
+        assert len(output_records) == len(inserted_records), \
+            f'{len(inserted_records)} records should have been processed but only {len(output_records)} were found'
+
+        for output_record, inserted_record in zip(output_records, inserted_records):
+            assert output_record.header.values[DATABASE_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_DATABASE
+            assert output_record.header.values[SCHEMA_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_SCHEMA
+            assert output_record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME] == table_name
+
+            for i in range(0, len(column_names)):
+                # Check that each row has the needed columns ...
+                assert column_names[i] in output_record.field, f'The record should have a column named {column_names[i]}'
+                # ... and that the value contained is what we expect
+                if read_values_as_string:
+                    assert inserted_record == output_record.field[column_names[i]], \
+                        f'The value of the field {column_names[i]} should have been {inserted_record},' \
+                        f' but it is {output_record.field[column_names[i]]}'
+                else:
+                    assert json.loads(inserted_record) == output_record.field[column_names[i]], \
+                        f'The value of the field {column_names[i]} should have been {inserted_record},' \
+                        f' but it is {output_record.field[column_names[i]]}'
+    except (RunError, RunningError) as e:
+        assert max_chars_per_column < len(inserted_records[0]), \
+            'No exceptions should have been thrown when using less columns than the maximum amount defined'
+        response = sdc_executor.get_pipeline_status(pipeline).response.json()
+        status = response.get('status')
+        logger.info('Pipeline status %s ...', status)
+        assert 'DATA_LOADING_46' in e.message
     finally:
         snowflake.delete_staged_files(storage_path)
         snowflake.drop_entities(stage_name=stage_name)
