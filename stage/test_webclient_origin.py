@@ -1098,3 +1098,58 @@ def test_per_status_actions_constant_retry(
     for error_record in error_records:
         assert error_record.header._data.get("errorMessage").startswith("WEB_CLIENT_RUNTIME_0067"), \
         f'WEB_CLIENT_RUNTIME_0067 was expected instead it failed with {error_records[0].header._data.get("errorCode")}'
+
+
+@sdc_min_version("6.0.0")
+def test_endpoint_with_empty_data_response(
+        sdc_builder, sdc_executor, cleanup, server, test_name):
+    
+    """
+    Verify that Endpoint with Empty Data Response passes the record to the next stages 
+    if per-status actions are set accordingly.
+    """
+
+    from flask import Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response('{}', mimetype='applicaton/json')
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint.recv_url(),
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        per_status_actions=[
+            {
+                "codes": ["Default"],
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error",
+            }
+        ],
+        response_data_format='JSON',
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    output_records = wiretap.output_records
+    assert 0 < len(output_records)
+    for output_record in output_records:
+        assert f'{output_record.field}' == '{}'

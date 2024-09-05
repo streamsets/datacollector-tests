@@ -591,3 +591,75 @@ def test_per_status_actions_constant_retry(
     for error_record in error_records:
         assert error_record.header._data.get("errorMessage").startswith("WEB_CLIENT_RUNTIME_0067"), \
             f'WEB_CLIENT_RUNTIME_0067 was expected instead it failed with {error_records[0].header._data.get("errorCode")}'
+
+
+@pytest.mark.parametrize('mime_type, response_data, data_format', 
+    [
+        ('applicaton/json', '{}', 'JSON'),
+        ('text/plain', '', 'TEXT'),
+        ('applicaton/json', '', 'JSON'),
+    ]
+)
+@sdc_min_version("6.0.0")
+def test_endpoint_with_empty_data_response(
+        sdc_builder, sdc_executor, cleanup, server, test_name, mime_type, response_data, data_format):
+    
+    """
+    Verify that Endpoint with Empty Data Response passes the record to the next stages 
+    if per-status actions are set accordingly.
+    """
+
+    from flask import json, Response
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response(response_data, mimetype=mime_type)
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+
+    endpoint_id = randint(0, 10000)
+    field_value = 10
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+       data_format="JSON",
+       stop_after_first_batch=True,
+       raw_data=json.dumps({"field1": field_value, "endpoint_id": endpoint_id})
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint.recv_url(),
+        output_field="/field1",
+        per_status_actions=[
+            {
+                "codes": ["Default"],
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error",
+            }
+        ],
+        response_data_format=data_format,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    _wait_for_pipeline_statuses(sdc_executor, pipeline, ["FINISHED"])
+    output_records = wiretap.output_records
+    assert 1 == len(output_records)
+    if data_format == 'JSON':
+        assert f'{output_records[0].field.get("field1")}' == response_data
+    else:
+        assert output_records[0].field.get('field1') == response_data
