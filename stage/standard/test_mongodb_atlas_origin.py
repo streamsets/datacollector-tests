@@ -16,6 +16,7 @@ import datetime
 import logging
 import string
 from bson.decimal128 import Decimal128
+from bson.dbref import DBRef
 
 import pytest
 from streamsets.testframework.markers import mongodb, sdc_min_version
@@ -29,32 +30,32 @@ pytestmark = [mongodb('atlas'), sdc_min_version('5.2.0')]
 
 # BSON types: https://www.mongodb.com/docs/manual/reference/bson-types/
 DATA_TYPES = [
-    ('true', 'bool', True),
+    (True, 'bool', True),
     ('a', 'string', 'a'),
     # ('a', 'byte, 'a'),  # Not supported today
     (120, 'int', 120),
     (120, 'long', 120),
-    (20.1, 'double', 20.100000381469727),
     (20.1, 'double', 20.1),
-    (20.1, 'decimal', Decimal128('20.10')),
-    ('2020-01-01 10:00:00', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
-    ("2020-01-01T10:00:00+00:00", 'date', datetime.datetime(2020, 1, 1, 10, 0)),
-    ('string', 'array', b'string'),
-    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'uuid', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'.encode('ascii'))
+    (20.1, 'decimal', 20.1),
+    ('2020-01-01 10:00:00', 'date', '2020-01-01 10:00:00'),
+    ('2020-01-01T10:00:00+00:00', 'date', '2020-01-01T10:00:00+00:00'),
+    (['a', 'r', 'r', 'a', 'y'], 'array', ['a', 'r', 'r', 'a', 'y']),
+    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'.encode('ascii'), 'uuid', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'.encode('ascii')),
+    (DBRef(collection='collectionRef', id='a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'), 'dbRef', {'database': None, 'collection': 'collectionRef', 'id': 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'})
 ]
 
 
 @mongodb('atlas')
-@pytest.mark.parametrize('input,bson_type,expected', DATA_TYPES,
+@pytest.mark.parametrize('data_input,bson_type,expected', DATA_TYPES,
                          ids=[f'{i[1]}_{i[0]}' for i in DATA_TYPES])
-def test_data_types(sdc_builder, sdc_executor, mongodb, input, bson_type, expected):
+def test_data_types(sdc_builder, sdc_executor, mongodb, data_input, bson_type, expected):
     """
     Test all feasible data types MongoDB Atlas can read
     """
     database = get_random_string(string.ascii_letters, 10)
     collection = get_random_string(string.ascii_letters, 10)
 
-    data = [{'value': input}]
+    data = [{'value': data_input}]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -91,8 +92,9 @@ def test_data_types(sdc_builder, sdc_executor, mongodb, input, bson_type, expect
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
-
-        assert data == [{'value': record.field['value'].value} for record in wiretap.output_records]
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['value'] == expected
 
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_origin.database)
