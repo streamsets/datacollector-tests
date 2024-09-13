@@ -19,6 +19,7 @@ from bson.decimal128 import Decimal128
 from bson.dbref import DBRef
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import mongodb, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -52,6 +53,9 @@ def test_data_types(sdc_builder, sdc_executor, mongodb, data_input, bson_type, e
     """
     Test all feasible data types MongoDB Atlas can read
     """
+    if Version(sdc_executor.version) < Version('6.0.0') and bson_type == 'dbRef':
+        pytest.skip("Fix for dbRef using UUID included in 6.0.0.")
+
     database = get_random_string(string.ascii_letters, 10)
     collection = get_random_string(string.ascii_letters, 10)
 
