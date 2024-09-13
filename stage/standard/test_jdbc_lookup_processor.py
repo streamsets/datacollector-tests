@@ -842,6 +842,7 @@ def test_default_value(sdc_builder, sdc_executor, database, credential_store):
 
 
 @database
+@sdc_min_version('5.10.0')
 @pytest.mark.parametrize('data_type', ['STRING', 'INTEGER'])
 def test_empty_default_value(sdc_builder, sdc_executor, database, credential_store, data_type):
     """
