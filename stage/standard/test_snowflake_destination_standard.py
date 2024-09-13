@@ -216,6 +216,9 @@ def test_push_pull(sdc_builder, sdc_executor, snowflake):
 @pytest.mark.parametrize('input, converter_type, database_type, expected', DATA_TYPES_SNOWFLAKE,
                          ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_SNOWFLAKE])
 def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, snowflake, keep_data):
+    if Version(sdc_executor.version) < Version('5.11.0') and database_type == 'TIMESTAMP_LTZ':
+        pytest.skip("Support for TIMESTAMP_LTZ added in 5.11.0.")
+
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
     engine = snowflake.engine
 

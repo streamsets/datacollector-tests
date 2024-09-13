@@ -168,8 +168,8 @@ def test_data_types(sdc_builder, sdc_executor, snowflake, read_values_as_string)
 
     for i in range(0, len(DATA_TYPES_SNOWFLAKE)):
         db_type = DATA_TYPES_SNOWFLAKE[i][0]
-        if ((Version(sdc_builder.version) < Version('5.8.0') and db_type == 'GEOGRAPHY') or
-                (Version(sdc_builder.version) < Version('5.11.0') and db_type == 'TIMESTAMP_LTZ')):
+        if ((Version(sdc_executor.version) < Version('5.8.0') and db_type == 'GEOGRAPHY') or
+                (Version(sdc_executor.version) < Version('5.11.0') and db_type == 'TIMESTAMP_LTZ')):
             continue
         db_input_data = DATA_TYPES_SNOWFLAKE[i][1]
         if read_values_as_string:
@@ -252,8 +252,8 @@ def test_data_types_null_values(sdc_builder, sdc_executor, snowflake, read_value
 
     for i in range(0, len(DATA_TYPES_SNOWFLAKE)):
         db_type = DATA_TYPES_SNOWFLAKE[i][0]
-        if ((Version(sdc_builder.version) < Version('5.8.0') and db_type == 'GEOGRAPHY') or
-                (Version(sdc_builder.version) < Version('5.11.0') and db_type == 'TIMESTAMP_LTZ')):
+        if ((Version(sdc_executor.version) < Version('5.8.0') and db_type == 'GEOGRAPHY') or
+                (Version(sdc_executor.version) < Version('5.11.0') and db_type == 'TIMESTAMP_LTZ')):
             continue
         expected_data = None
         if read_values_as_string:
