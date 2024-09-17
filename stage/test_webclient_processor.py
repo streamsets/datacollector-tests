@@ -663,3 +663,167 @@ def test_endpoint_with_empty_data_response(
         assert f'{output_records[0].field.get("field1")}' == response_data
     else:
         assert output_records[0].field.get('field1') == response_data
+
+
+PER_TIMEOUT_ACTIONS = [
+        [
+            {
+                "types": [
+                    "Default"
+                ],
+                "timeout": "${unit:toMilliseconds(10, second)}",
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error"
+            }
+        ],
+        [
+            {
+                "types": [
+                    "Default"
+                ],
+                "timeout": "${unit:toMilliseconds(10, second)}",
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error"
+            },
+            {
+                "types": [
+                    "Request"
+                ],
+                "timeout": "${unit:toMilliseconds(10, second)}",
+                "action": "Error",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Record"
+            }
+        ],
+        [
+            {
+                "types": [
+                    "Default"
+                ],
+                "timeout": "${unit:toMilliseconds(10, second)}",
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error"
+            },
+            {
+                "types": [
+                    "Response"
+                ],
+                "timeout": "${unit:toMilliseconds(10, second)}",
+                "action": "Record",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error"
+            }
+        ],
+        [
+            {
+                "types": [
+                    "Default"
+                ],
+                "timeout": "${unit:toMilliseconds(10, second)}",
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Record"
+            }
+        ],
+        [
+            {
+                "types": [
+                    "Default"
+                ],
+                "timeout": "${unit:toMilliseconds(10, second)}",
+                "action": "ConstantRetry",
+                "backoff": "${unit:toMilliseconds(1, second)}",
+                "retries": 5,
+                "failure": "Error"
+            }
+        ],
+    ]
+
+
+@pytest.mark.parametrize('per_timeout_actions, endpoint_url, response_status, result',
+                         [
+                             (PER_TIMEOUT_ACTIONS[0], 'http://127.0.0.1:5000/down_endpoint', None, "output"),
+                             (PER_TIMEOUT_ACTIONS[0], 'http://127.0.0.1:4000/down_endpoint', None, "output"),
+                             (PER_TIMEOUT_ACTIONS[0], 'http://1.0.0.1:5000/down_endpoint', None, "output"),
+                             (PER_TIMEOUT_ACTIONS[0], 'https://127.0.0.1:5000/down_endpoint', None, "output"),
+                             (PER_TIMEOUT_ACTIONS[1], '', 408, "error"),
+                             (PER_TIMEOUT_ACTIONS[2], '', 503, "output"),
+                             (PER_TIMEOUT_ACTIONS[2], '', 504, "output"),
+                             (PER_TIMEOUT_ACTIONS[3], 'http://127.0.0.1:5000/down_endpoint', None, "output"),
+                             (PER_TIMEOUT_ACTIONS[4], 'http://127.0.0.1:5000/down_endpoint', None, "error")
+                         ]
+                         )
+@sdc_min_version("6.0.0")
+def test_per_timeout_actions_down_endpoint(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_timeout_actions, endpoint_url, response_status, result):
+
+    """
+    Verify that even if the Endpoint is down, per timeout action performs correctly.
+    """
+
+    from flask import json
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    if response_status is not None:
+        def serve():
+            return '', response_status
+
+        endpoint = Endpoint(serve, ["GET"])
+        server.start([endpoint])
+        cleanup(server.stop)
+        server.ready()
+        endpoint_url = endpoint.recv_url()
+
+    endpoint_id = randint(0, 10000)
+    field_value = 10
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON",
+        stop_after_first_batch=True,
+        raw_data=json.dumps({"field1": field_value, "endpoint_id": endpoint_id})
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint_url,
+        output_field="/output",
+        per_status_actions=PER_STATUS_ACTIONS,
+        per_timeout_actions=per_timeout_actions
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    _wait_for_pipeline_statuses(sdc_executor, pipeline, ["FINISHED"])
+    if result == "output":
+        output_records = wiretap.output_records
+        assert 1 == len(output_records)
+        output_record = output_records[0]
+        assert output_record.field.get("field1") == field_value
+        assert output_record.field.get("endpoint_id") == endpoint_id
+        assert output_record.field.get("output") == ""
+    else:
+        error_records = wiretap.error_records
+        assert 1 == len(error_records)
+        error_record = error_records[0]
+        assert error_record.field.get("field1") == field_value
+        assert error_record.field.get("endpoint_id") == endpoint_id
+        assert error_record.header._data.get("errorMessage").startswith("WEB_CLIENT_RUNTIME_0067"), \
+            f'WEB_CLIENT_RUNTIME_0067 was expected instead it failed with {error_records[0].header._data.get("errorCode")}'
