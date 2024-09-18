@@ -11,7 +11,7 @@ import pytest
 import re
 from operator import itemgetter
 from stage import _clean_up_databricks
-from streamsets.sdk.exceptions import StartError, RunError, ValidationError
+from streamsets.sdk.exceptions import StartError, StartingError, RunError, RunningError, ValidationError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, azure, deltalake, gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -1604,17 +1604,17 @@ def test_partition_table_with_unity_catalog_error(sdc_builder, sdc_executor, del
         if partition_columns in ['Incorrect', 'Wildcard']:
             try:
                 sdc_executor.start_pipeline(pipeline)
-            except StartError as e:
+            except (StartError, StartingError) as e:
                 assert 'DELTA_LAKE_41' in str(e.args[0])
         elif partition_columns == 'Empty':
             try:
                 sdc_executor.start_pipeline(pipeline)
-            except StartError as e:
+            except (StartError, StartingError) as e:
                 assert 'DELTA_LAKE_40' in str(e.args[0])
         elif partition_columns == 'MultipleWithWrongColumns':
             try:
                 sdc_executor.start_pipeline(pipeline)
-            except RunError as e:
+            except (RunError, RunningError) as e:
                 assert 'DELTA_LAKE_42' in str(e.args[0])
     finally:
         _clean_up_databricks(deltalake, table_name)
