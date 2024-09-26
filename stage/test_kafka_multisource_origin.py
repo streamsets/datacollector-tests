@@ -560,7 +560,7 @@ def test_kafka_multiconsumer_null_message_key(sdc_builder, sdc_executor, cluster
         kafka_multitopic_consumer >> wiretap.destination
     """
     if any(stage_lib == 'streamsets-datacollector-apache-kafka_0_9-lib' in stage_lib
-           for stage_lib in cluster['sdc_stage_libs']):
+           for stage_lib in cluster.sdc_stage_libs):
         pytest.skip('Test only designed to run on Kafka and versions > 0.9')
 
     message = json.dumps({'abc': '123'})
