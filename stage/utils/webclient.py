@@ -11,22 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+from __future__ import annotations
 from stage.utils.common import cleanup
 
 import logging
 import pytest
 import socket
 import string
+import sqlite3
 from multiprocessing import Process, Queue
 from streamsets.testframework.utils import get_random_string
 from time import sleep
-from typing import Callable, Sequence
+from typing import Callable, Sequence, Any, Optional, List
+from dataclasses import dataclass
+from datetime import datetime
 
 RELEASE_VERSION = "5.10.0"
 WEB_CLIENT = "Web Client"
 LIBRARY = "streamsets-datacollector-webclient-impl-okhttp-lib"
 logger = logging.getLogger(__name__)
+ACTIVITY_DB_FILE="/tmp/mocked_endpoints_activity.db"
 
 
 PER_STATUS_ACTIONS = [
@@ -73,18 +77,40 @@ def deps():  # x # TODO: include them in STF?
 
 
 class Endpoint:
-    def __init__(self, func: Callable, methods: Sequence[str], path: str = None):
+    def __init__(self, func: Callable[[], Any], methods: Sequence[str], path: Optional[str] = None, capture_activity: bool = False):
         """TODO"""
+        self.__uid__ = get_random_string(string.ascii_letters, 10)
         self.__methods__ = methods
         self.__url__ = None
         self.__url_queue__ = Queue(maxsize=1)
         self.__xfunc__ = func
-        self.__xpath__ = path if path is not None else f"{func.__name__}_{get_random_string(string.ascii_letters, 10)}"
+        self.__xpath__ = path if path is not None else f"{func.__name__}_{self.__uid__}"
+        self.__capture_activity__ = capture_activity
+        if self.__capture_activity__:
+            self._init_db()
+
+    def _init_db(self):
+        logger.debug(f'Initializing DB context for endpoint {self.__uid__}')
+        self.__db_conn__ = sqlite3.connect(ACTIVITY_DB_FILE)
+        self.__db_conn__.row_factory = sqlite3.Row
+        self.__db_cursor__ = self.__db_conn__.cursor()
+        self.__db_table_name__ = f'endpoint_{self.__uid__}_activity'
+        self.__db_cursor__.execute(f'CREATE TABLE {self.__db_table_name__} (request_verb, request_url, request_body, response, instant DATETIME DEFAULT CURRENT_TIMESTAMP)')
+        logger.debug(f'Initialization done')
 
     @property
     def func(self) -> Callable:
         """Function to run in the endpoint."""
-        return self.__xfunc__
+        def __xfunc_wrapper__():
+            from flask import request
+            r = self.__xfunc__()
+
+            _local_db_conn = sqlite3.connect(ACTIVITY_DB_FILE)
+            _local_db_conn.cursor().execute(f'INSERT INTO {self.__db_table_name__} (request_verb, request_url, request_body, response) VALUES ("{request.method}", "{request.full_path}", "{request.get_data(as_text=True)}", "{r}")')
+            _local_db_conn.commit()
+            _local_db_conn.close()
+            return r
+        return self.__xfunc__ if not self.__capture_activity__ else __xfunc_wrapper__
 
     @property
     def methods(self) -> Sequence[str]:
@@ -97,7 +123,7 @@ class Endpoint:
         return self.__xpath__
 
     @property
-    def url(self) -> str:
+    def url(self) -> Optional[str]:
         """Full url of the endpoint. It has a null value until @Endpoint.recv_url runs at least once.
         Should only be used once."""
         return self.__url__
@@ -106,12 +132,41 @@ class Endpoint:
         """Send the url to the queue. Used to communicate it between different processes."""
         self.__url_queue__.put(url, block=False)
 
-    def recv_url(self) -> str:
+    def recv_url(self) -> Optional[str]:
         """Receive the url from the queue. Used to communicate it between different processes.
         Should only be called once, after that @Endpoint.url should be called."""
         self.__url__ = self.__url_queue__.get()
         return self.url
 
+    @property
+    def activity(self) -> EndpointActivity:
+        if not self.__capture_activity__:
+            raise NoActivityCaptured('No activity has been captured. To capture activity please use capture_activity=True')
+        activity = self.__db_cursor__.execute(f'SELECT * from {self.__db_table_name__} ORDER BY INSTANT ASC').fetchall()
+        activity_items = [EndpointActivityItem(**dict(a)) for a in activity]
+        return EndpointActivity(hits=len(activity_items), activity_items=activity_items)
+
+    def __del__(self):
+        if self.__capture_activity__:
+            self.__db_cursor__.execute(f'DROP TABLE {self.__db_table_name__}')
+            self.__db_cursor__.close()
+            self.__db_conn__.close()
+
+class NoActivityCaptured(Exception):
+    pass
+
+@dataclass
+class EndpointActivity:
+    hits: int
+    activity_items: List[EndpointActivityItem]
+
+@dataclass
+class EndpointActivityItem:
+    request_verb: str
+    request_url: str
+    request_body: str
+    response: str
+    instant: str
 
 class Server:
     def __init__(self, addr: str, port: int):

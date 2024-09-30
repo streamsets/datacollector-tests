@@ -17,12 +17,13 @@ import logging
 import pytest
 import requests
 import string
+import time
 
 from pretenders.common.constants import FOREVER
 
 from streamsets.testframework.markers import sdc_min_version, sdc_min_version, web_client
 from streamsets.testframework.utils import get_random_string
-from streamsets.sdk.exceptions import RunError
+from streamsets import sdk
 
 from stage.utils.webclient import (
     deps,
@@ -1103,9 +1104,9 @@ def test_per_status_actions_constant_retry(
 @sdc_min_version("6.0.0")
 def test_endpoint_with_empty_data_response(
         sdc_builder, sdc_executor, cleanup, server, test_name):
-    
+
     """
-    Verify that Endpoint with Empty Data Response passes the record to the next stages 
+    Verify that Endpoint with Empty Data Response passes the record to the next stages
     if per-status actions are set accordingly.
     """
 
@@ -1153,3 +1154,240 @@ def test_endpoint_with_empty_data_response(
     assert 0 < len(output_records)
     for output_record in output_records:
         assert f'{output_record.field}' == '{}'
+
+
+@sdc_min_version("6.0.0")
+@pytest.mark.parametrize('server_response, expected_records',
+                         [
+                             (
+                                {
+                                    "1": {"records": [{"some": "stuff"}]},
+                                    "2": {}
+                                },
+                                [{"some": "stuff"}]
+                            ),
+                            (
+                               {
+                                   "1": {"records": [{"some": "stuff"}]},
+                                   "2": {},
+                                   "3": {"records": [{"other": "stuff2"}]},
+                               },
+                               [{"some": "stuff"}]
+                            ),
+                         ])
+def test_pagination_abort_if_result_field_does_not_exist(sdc_builder, sdc_executor, cleanup, server, 
+                                                         test_name, server_response, expected_records):
+
+    """If the endpoint response does not contain the result field, the pipeline should stop"""
+
+    from flask import json, request # type: ignore
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return server_response[request.args.get("page")]
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = f"{endpoint.recv_url()}?page=${{startAt}}"
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        pagination_mode="Page",
+        result_field_path="/records",
+        on_missing_result_field="ABORT_PIPELINE",
+        initial_page=1,
+        final_page=4,
+        per_status_actions=PER_STATUS_ACTIONS,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    webclient_origin >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    with pytest.raises(sdk.exceptions.RunError) as run_error:
+        handler.start_work(work)
+        handler.wait_for_metric(work, "input_record_count", 2, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    assert 'WEB_CLIENT_RUNTIME_0045' in str(run_error)
+    wiretap_output_records = wiretap.output_records
+    assert len(expected_records) == len(wiretap_output_records)
+    assert all(expected_record == output_record.field 
+               for expected_record, output_record in zip(expected_records, wiretap_output_records))
+
+
+@sdc_min_version("6.0.0")
+@pytest.mark.parametrize('server_response, expected_records',
+                         [
+                             (
+                                {
+                                    "1": {"records": [{"some": "stuff"}]},
+                                    "2": {}
+                                },
+                                [{"some": "stuff"}]
+                            ),
+                            (
+                               {
+                                   "1": {"records": [{"some": "stuff"}]},
+                                   "2": {},
+                                   "3": {"records": [{"other": "stuff2"}]},
+                               },
+                               [{"some": "stuff"}]
+                            ),
+                         ])
+def test_pagination_no_more_data_event_if_result_field_does_not_exist(sdc_builder, sdc_executor, cleanup, server, 
+                                                         test_name, server_response, expected_records):
+
+    """If the endpoint response does not contain the result field, the pipeline should stop"""
+
+    from flask import json, request # type: ignore
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return server_response[request.args.get("page")]
+
+    endpoint = Endpoint(serve, ["GET"], capture_activity=True)
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = f"{endpoint.recv_url()}?page=${{startAt}}"
+
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        pagination_mode="Page",
+        result_field_path="/records",
+        on_missing_result_field="NO_MORE_DATA_EVENT",
+        initial_page=1,
+        final_page=4,
+        wait_time_between_requests_in_ms=500,
+        per_status_actions=PER_STATUS_ACTIONS
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(
+        react_to_events=True,
+        event_type='no-more-data',
+        on_record_error='DISCARD',
+        stage_record_preconditions=["${record:eventType() == 'no-more-data'}"]
+    )
+
+    webclient_origin >> wiretap.destination
+    webclient_origin >= finisher
+
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_status(work, "FINISHED", timeout_sec=30)
+
+    endpoint_activity = endpoint.activity
+    assert endpoint_activity.hits == 2
+    assert "page=1" in endpoint_activity.activity_items[0].request_url 
+    assert "page=2" in endpoint_activity.activity_items[1].request_url 
+
+    wiretap_output_records = wiretap.output_records
+    assert len(expected_records) == len(wiretap_output_records)
+    assert all(expected_record == output_record.field 
+               for expected_record, output_record in zip(expected_records, wiretap_output_records))
+
+@sdc_min_version("6.0.0")
+@pytest.mark.parametrize('server_response, expected_records,expected_number_missing_events',
+                         [
+                             (
+                                {
+                                    "1": {"records": [{"some": "stuff"}]},
+                                    "2": {},
+                                    "3": {},
+                                    "4": {},
+                                },
+                                [{"some": "stuff"}],
+                                3
+                            ),
+                            (
+                               {
+                                   "1": {"records": [{"some": "stuff"}]},
+                                   "2": {},
+                                   "3": {"records": [{"other": "stuff2"}]},
+                                   "4": {},
+                               },
+                               [{"some": "stuff"}, {"other": "stuff2"}],
+                               2
+                            ),
+                         ])
+def test_pagination_missing_result_field_event_if_result_field_does_not_exist(sdc_builder, sdc_executor, cleanup, server, 
+                                                                              test_name, server_response, expected_records, expected_number_missing_events):
+
+    """If the endpoint response does not contain the result field, the pipeline should stop"""
+
+    from flask import json, request # type: ignore
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        page = request.args.get("page")
+        return server_response[page] if page in server_response else {}
+
+    endpoint = Endpoint(serve, ["GET"], capture_activity=True)
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = f"{endpoint.recv_url()}?page=${{startAt}}"
+    initial_page = 1
+    final_page = 5
+    webclient_origin = pipeline_builder.add_stage(WEB_CLIENT, type="origin")
+    webclient_origin.set_attributes(
+        library=LIBRARY,
+        request_endpoint=url,
+        max_batch_size_in_records=1,
+        batch_wait_time_in_ms=10,
+        ingestion_mode="Batch",
+        pagination_mode="Page",
+        result_field_path="/records",
+        on_missing_result_field="MISSING_RESULT_FIELD_EVENT",
+        initial_page=initial_page,
+        final_page=final_page,
+        per_status_actions=PER_STATUS_ACTIONS,
+    )
+    wiretap = pipeline_builder.add_wiretap()
+    wiretap_events = pipeline_builder.add_wiretap()
+
+    webclient_origin >> wiretap.destination
+    webclient_origin >= wiretap_events.destination
+
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    cleanup(handler.stop_work, work)
+    handler.start_work(work)
+    handler.wait_for_metric(work, "input_record_count", len(expected_records), timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+    endpoint_activity = endpoint.activity
+    assert endpoint_activity.hits == final_page - initial_page
+    for i in range(initial_page, final_page):
+        assert f"page={i}" in endpoint_activity.activity_items[i-1].request_url 
+
+    wiretap_output_records = wiretap.output_records
+    assert len(expected_records) == len(wiretap_output_records)
+    assert all(expected_record == output_record.field 
+               for expected_record, output_record in zip(expected_records, wiretap_output_records))
+
+    missing_result_field_events = [r for r in wiretap_events.output_records 
+                                   if r.header.values['sdc.event.type'] == 'missing-result-field']
+    assert len(missing_result_field_events) == expected_number_missing_events
