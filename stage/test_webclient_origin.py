@@ -1217,7 +1217,7 @@ def test_pagination_abort_if_result_field_does_not_exist(sdc_builder, sdc_execut
     with pytest.raises(sdk.exceptions.RunError) as run_error:
         handler.start_work(work)
         handler.wait_for_metric(work, "input_record_count", 2, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
-    assert 'WEB_CLIENT_RUNTIME_0045' in str(run_error)
+    assert 'WEB_CLIENT_RUNTIME_0076' in str(run_error)
     wiretap_output_records = wiretap.output_records
     assert len(expected_records) == len(wiretap_output_records)
     assert all(expected_record == output_record.field 
