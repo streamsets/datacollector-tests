@@ -341,6 +341,10 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
     if custom_table_location and not external_table:
         pytest.skip('Test skipped : SDC-5459: Hive processor is ignoring location for internal tables')
 
+    if custom_database_location and not custom_table_location and not external_table:
+        pytest.skip(f'''Test skipped : COLLECTOR-3273: internal tables with custom location outside database
+        managed location not supported''')
+
     table_path = (f'{custom_table_location}' if custom_table_location
                   else (f'{custom_database_location}/{table_name}' if custom_database_location
                         else f'/tmp/sdc/hive/warehouse/{db}.db/{table_name}' if external_table else ''))
