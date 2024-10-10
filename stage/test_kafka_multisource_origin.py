@@ -45,7 +45,7 @@ def sdc_common_hook():
     return hook
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.16.0')
 def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     """Check that timestamp and timestamp type are included in record header. Verifies that for previous versions of
@@ -79,7 +79,7 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.7.0')
 def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, cluster):
     """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
@@ -125,7 +125,7 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
 
 
 # SDC-10501: Option to enable/disable Kafka auto commit Offsets
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.6.0')
 def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
     """Ensure that we read all the data, even when a pipeline fails - thus no records are "auto committed". The test
@@ -200,7 +200,7 @@ for record in sdc.records:
         sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
     """ Above SDC-10501 introduced a bug which does not commit offset when the number of records
     is less than the max batch size. This process 5 records for the 1st run, stop pipeline, and
@@ -266,7 +266,7 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
 
 
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.6.0')
 def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
     """Check that retrieving messages from Kafka using Kafka Multitopic Consumer respects both the Batch Max Wait Time
@@ -322,7 +322,7 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
 
 
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.9.1')
 def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     """Check that retrieving messages from Kafka using Kafka Multitopic Consumer respects both the Batch Max Wait Time
@@ -373,7 +373,7 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
 
 # SDC-13819: Kafka Multi-Topic Consumer refuses to ingest malformed records, rather than sending them to pipeline
 # error handling
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.15.0')
 def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
     """
@@ -410,7 +410,7 @@ def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
 
 
 # SDC-14063: Kafka multitopic consumer commits offset in a preview mode
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 def test_kafka_preview_not_committing_offset(sdc_builder, sdc_executor, cluster):
     """Ensure that preview won't commit offset when reading from Kafka."""
     builder = sdc_builder.get_pipeline_builder()
@@ -441,7 +441,7 @@ def test_kafka_preview_not_committing_offset(sdc_builder, sdc_executor, cluster)
             sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.16.1')
 def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
     """Ensure that no data is lost when committed offset is shifted from batch size"""
@@ -473,7 +473,7 @@ def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.16.2')
 def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
     INPUT_DATA = 'Hello World from SDC & DPM!'
@@ -498,7 +498,7 @@ def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
 
 
 # SDC-16127: KafkaMultiConsumer: Does not handle messages with null payload
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
     """Check that retrieving a message with null payload from Kafka using Kafka Multitopic Consumer does not return anything.
     The message should be written to Kafka without using SDC.
@@ -551,7 +551,7 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
 
 
 @sdc_min_version('5.11.0')
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 def test_kafka_multiconsumer_null_message_key(sdc_builder, sdc_executor, cluster):
     """Check that retrieving a message with null message key and null payload does not throw and unexpected
     NullPointerException (NPE). It creates an error record instead.
@@ -626,7 +626,7 @@ def test_kafka_multiconsumer_null_message_key(sdc_builder, sdc_executor, cluster
             sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
     """SDC-15723: Improve behavior on JSON type missconfiguration. When user configures JSON
      parser to parse "Array" but the data aren't array"""
@@ -660,7 +660,7 @@ def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('5.0.0')
 def test_kafka_topic_with_pattern(sdc_builder, sdc_executor, cluster):
     topic_data_1 = 'Info from Topic 1'
@@ -693,7 +693,7 @@ def test_kafka_topic_with_pattern(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('kafka')
+@cluster('cdh', 'kafka')
 @sdc_min_version('5.0.0')
 def test_kafka_topic_with_pattern_new_topic_during_pipeline_run(sdc_builder, sdc_executor, cluster):
     topic_data_1 = 'Info from Topic 1'
