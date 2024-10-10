@@ -65,7 +65,7 @@ def test_data_types(sdc_builder, sdc_executor, cluster):
     pytest.skip("Kafka Multitopic Origin doesn't talk to a structured system, so we don't need to test each data type.")
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 @pytest.mark.parametrize('test_name, topic_name', KAFKA_NAMES, ids=[t[0] for t in KAFKA_NAMES])
 def test_object_names_topic(sdc_builder, sdc_executor, cluster, test_name, topic_name):
     """
@@ -97,7 +97,7 @@ def test_object_names_topic(sdc_builder, sdc_executor, cluster, test_name, topic
     assert [record.field for record in wiretap.output_records] == [expected_output]
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 @pytest.mark.parametrize('test_name, consumer_group_name', KAFKA_NAMES, ids=[t[0] for t in KAFKA_NAMES])
 def test_object_names_consumer_group(sdc_builder, sdc_executor, cluster, test_name, consumer_group_name):
     """
@@ -138,7 +138,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, cluster):
     pytest.skip('Kafka Standalone Origin does not generate events.')
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 @pytest.mark.parametrize('auto_offset_reset', ['EARLIEST', 'LATEST', 'TIMESTAMP'])
 def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
     """
@@ -210,7 +210,7 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
             sdc_executor.stop_pipeline(pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_multiple_batch(sdc_builder, sdc_executor, cluster):
     """
     Test that we can consume multiple batches and the pipeline produces all the records.
@@ -250,7 +250,7 @@ def test_multiple_batch(sdc_builder, sdc_executor, cluster):
     assert all(element in total_data for element in records)
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_avro_with_schema(sdc_builder, sdc_executor, cluster):
     DATA = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
     SCHEMA = {'namespace': 'example.avro',
@@ -285,7 +285,7 @@ def test_data_format_avro_with_schema(sdc_builder, sdc_executor, cluster):
     assert [record.field for record in wiretap.output_records] == [DATA]
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_avro_without_schema(sdc_builder, sdc_executor, cluster):
     DATA = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
     SCHEMA = {'namespace': 'example.avro',
@@ -323,7 +323,7 @@ def test_data_format_avro_without_schema(sdc_builder, sdc_executor, cluster):
     assert [record.field for record in wiretap.output_records] == [DATA]
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_binary(sdc_builder, sdc_executor, cluster):
     MESSAGES = [b'message 1', b'message 2']
     EXPECTED_OUTPUT = [b'message 1', b'message 2']
@@ -347,7 +347,7 @@ def test_data_format_binary(sdc_builder, sdc_executor, cluster):
     assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_datagram_syslog(sdc_builder, sdc_executor, cluster):
     """Kafka Consumer parses syslog data."""
     MESSAGE = ('rO0ABXeOAAAAAQAAAAEAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAAAFw8MzQ+MSAyMDEzLTA2LTI4VDA2Oj'
@@ -386,7 +386,7 @@ def test_data_format_datagram_syslog(sdc_builder, sdc_executor, cluster):
     assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_datagram_netflow(sdc_builder, sdc_executor, cluster):
     MESSAGE = ('rO0ABXoAAAIqAAAAAQAAAAIAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAAAfgABQAKAAAAAFVFcOIBWL'
                'IwAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAAAAAAAQAAAFlnyqItZ8qiLQA1JA8AABEAAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAA'
@@ -431,7 +431,7 @@ def test_data_format_datagram_netflow(sdc_builder, sdc_executor, cluster):
                                              for item in EXPECTED_OUTPUT_FIRST_RECORD.items())
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_datagram_collectd(sdc_builder, sdc_executor, cluster):
     MESSAGE = (
         'rO0ABXoAAAQAAAAAAQAAAAMAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAABVkCAAAoLmo9Of+LakZDcogiJUJa2iIO1'
@@ -480,7 +480,7 @@ def test_data_format_datagram_collectd(sdc_builder, sdc_executor, cluster):
     assert wiretap.output_records[0].field == EXPECTED_OUTPUT
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 @sdc_min_version('3.22.0')
 @pytest.mark.parametrize('csv_parser', ['LEGACY_PARSER', 'UNIVOCITY'])
 def test_data_format_delimited(sdc_builder, sdc_executor, csv_parser, cluster):
@@ -509,7 +509,7 @@ def test_data_format_delimited(sdc_builder, sdc_executor, csv_parser, cluster):
 
 
 @pytest.mark.parametrize('data_type', ['ARRAY', 'ARRAY_OF_OBJECTS', 'OBJECT'])
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_json(sdc_builder, sdc_executor, cluster, data_type):
     """Kafka Consumer parses JSON in a variety of data types."""
     # We map data_type to input data as well as the expected output.
@@ -538,7 +538,7 @@ def test_data_format_json(sdc_builder, sdc_executor, cluster, data_type):
     assert [record.field for record in wiretap.output_records] == [expected_output]
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_log(sdc_builder, sdc_executor, cluster):
     MESSAGE = '200 [main] DEBUG org.StreamSets.Log4j unknown - This is a sample log message'
     EXPECTED_OUTPUT = {'category': 'org.StreamSets.Log4j',
@@ -568,7 +568,7 @@ def test_data_format_log(sdc_builder, sdc_executor, cluster):
     assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_protobuf(sdc_builder, sdc_executor, cluster):
     # Note that the VarintBytes call be omitted if each Kafka message contains one protobuf message
     # (i.e. kafka_consumer.delimited_messages = False).
@@ -599,7 +599,7 @@ def test_data_format_protobuf(sdc_builder, sdc_executor, cluster):
     assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_text(sdc_builder, sdc_executor, cluster):
     MESSAGE = 'Hello World from SDC & DPM!'
     EXPECTED = {'text': 'Hello World from SDC & DPM!'}
@@ -628,7 +628,7 @@ def test_data_format_sdc_record(sdc_builder, sdc_executor):
     pass
 
 
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_xml(sdc_builder, sdc_executor, cluster):
     MESSAGE = textwrap.dedent("""\
                               <developers>
@@ -662,7 +662,7 @@ def test_data_format_xml(sdc_builder, sdc_executor, cluster):
                                                                    else [EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED])
 
 @sdc_min_version('5.4.0')
-@cluster('cdh', 'kafka')
+@cluster('kafka')
 def test_data_format_mismatch(sdc_builder, sdc_executor, cluster):
     """Kafka Consumer parses TEXT message expecting JSON data in a single record and does not fail (ESC-1957)."""
 
