@@ -234,6 +234,7 @@ def test_stop_start(sdc_builder,
                                                sqlalchemy.String(20)))
     replication_slot = get_random_string(string.ascii_lowercase, 10)
 
+    pipeline = None
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
         postgresql_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
@@ -321,7 +322,8 @@ def test_stop_start(sdc_builder,
             records = [{'id': record.field['id'], 'name': record.field['name']} for record in wiretap.output_records]
             assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[30:40], key=lambda d: str(d['id']))
     finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+        if (pipeline is not None
+                and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot)
         if table is not None:
@@ -369,6 +371,7 @@ def test_start_not_from_latest(sdc_builder,
                                                sqlalchemy.String(20)))
     replication_slot = get_random_string(string.ascii_lowercase, 10)
 
+    pipeline = None
     try:
         table.create(database.engine)
         if create_slot:
@@ -455,7 +458,8 @@ def test_start_not_from_latest(sdc_builder,
                        for record in wiretap.output_records]
             assert sorted(records, key=lambda d: str(d['name'])) == sorted(sample_data_3, key=lambda d: str(d['name']))
     finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+        if (pipeline is not None
+                and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot)
         if table is not None:
@@ -502,6 +506,7 @@ def test_postgres_cdc_client_basic(sdc_builder,
     sdc_executor.add_pipeline(pipeline)
 
     table = None
+    connection = None
     try:
         sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
@@ -570,7 +575,8 @@ def test_postgres_cdc_client_basic(sdc_builder,
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
@@ -612,6 +618,7 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder,
     sdc_executor.add_pipeline(pipeline)
 
     table = None
+    connection = None
     try:
         sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
@@ -675,7 +682,8 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder,
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
@@ -723,6 +731,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder,
 
     table_allow = _create_table_in_database(table_name_allow, database)
     table_deny = _create_table_in_database(table_name_deny, database)
+    connection = None
     try:
         sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
@@ -795,7 +804,8 @@ def test_postgres_cdc_client_filtering_table(sdc_builder,
             table_allow.drop(database.engine)
         if table_deny is not None:
             table_deny.drop(database.engine)
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
@@ -841,6 +851,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder,
     sdc_executor.add_pipeline(pipeline)
 
     table = None
+    connection = None
     try:
         sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
@@ -861,7 +872,8 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder,
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         if table is not None:
             table.drop(database.engine)
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
@@ -922,6 +934,7 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
     sdc_executor.add_pipeline(pipeline)
 
     table = None
+    connections = None
     try:
         pipeline_cmd = sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
@@ -1017,8 +1030,9 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
-        for conn in connections:
-            conn.close()
+        if connections is not None:
+            for conn in connections:
+                conn.close()
 
 
 @database('postgresql')
@@ -1185,6 +1199,7 @@ def test_postgres_cdc_wal_sender_status_metrics(sdc_builder,
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
     table = _create_table_in_database(table_name, database)
+    connection = None
     try:
         start_command = sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
@@ -1212,7 +1227,8 @@ def test_postgres_cdc_wal_sender_status_metrics(sdc_builder,
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         table.drop(database.engine)
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
@@ -1261,6 +1277,7 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder,
     sdc_executor.add_pipeline(pipeline)
 
     tables = [_create_table_in_database(table_name, database) for table_name in table_names]
+    connection = None
     try:
         start_command = sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
@@ -1299,7 +1316,8 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder,
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         for t in tables:
             t.drop(database.engine)
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 @database('postgresql')
@@ -1439,14 +1457,12 @@ def test_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                                            record_contents,
                                                            parse_datetimes):
     pipeline = None
-
+    database_connection = None
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+    table_name = get_random_string(string.ascii_uppercase, 16)
     try:
 
         database_connection = database.engine.connect()
-
-        replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-
-        table_name = get_random_string(string.ascii_uppercase, 16)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
@@ -1583,7 +1599,8 @@ def test_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         try:
-            database_connection.execute(f'drop table {table_name}')
+            if database_connection is not None:
+                database_connection.execute(f'drop table {table_name}')
         except:
             pass
         database_connection.close()
@@ -1605,13 +1622,14 @@ def test_postgres_cdc_client_primary_keys_headers(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
 
+    pipeline = None
+    table = None
+    database_connection = None
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+    table_name = get_random_string(string.ascii_uppercase, 16)
     try:
 
         database_connection = database.engine.connect()
-
-        replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-
-        table_name = get_random_string(string.ascii_uppercase, 16)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
@@ -1790,6 +1808,7 @@ def test_postgres_cdc_client_primary_keys_headers(sdc_builder,
             pass
 
         try:
-            database_connection.close()
+            if database_connection is not None:
+                database_connection.close()
         except:
             pass
