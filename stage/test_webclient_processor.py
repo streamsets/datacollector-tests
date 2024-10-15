@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import pytest
 from streamsets.testframework.markers import sdc_min_version, web_client
 from streamsets.sdk.exceptions import RunError
@@ -33,7 +34,6 @@ from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 
 import logging
-import requests
 from random import randint
 
 DEFAULT_TIMEOUT_IN_SEC = 30
@@ -827,3 +827,77 @@ def test_per_timeout_actions_down_endpoint(
         assert error_record.field.get("endpoint_id") == endpoint_id
         assert error_record.header._data.get("errorMessage").startswith("WEB_CLIENT_RUNTIME_0067"), \
             f'WEB_CLIENT_RUNTIME_0067 was expected instead it failed with {error_records[0].header._data.get("errorCode")}'
+
+
+@sdc_min_version("5.11.0")
+@pytest.mark.parametrize('event_type', ['start', 'next-page', 'finished'])
+def test_webclient_events(sdc_builder, sdc_executor, cleanup, server, test_name, event_type):
+    """
+    We test that WebClient sends
+        a) Start Event before starting the pipeline
+        b) Next Page Event when the next page is loaded
+        c) Finished Event when the pipeline finishes
+    """
+
+    from flask import json, Response
+
+    content_type = "application/json"
+    response_data = """
+{
+"id":1,"employee_name":"John Doe","employee_salary":320800,"employee_age":41
+}
+"""
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    def serve():
+        return Response(response_data, content_type=content_type)
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    endpoint_id = randint(0, 10000)
+    field_value = 10
+
+    dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+    dev_raw_data_source.set_attributes(
+        data_format="JSON",
+        stop_after_first_batch=True,
+        raw_data=json.dumps({"field1": field_value, "endpoint_id": endpoint_id})
+    )
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library=LIBRARY,
+        request_endpoint=url,
+        output_field="/output",
+        per_status_actions=PER_STATUS_ACTIONS,
+        response_data_format="JSON",
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> webclient_processor >> wiretap.destination
+
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    finisher.react_to_events = True
+    finisher.event_type = event_type
+    finisher.stage_record_preconditions = ["${record:eventType() == '" + event_type + "'}"]
+    webclient_processor >= finisher
+
+    pipeline = pipeline_builder.build(test_name)
+
+    work = handler.add_pipeline(pipeline)
+    handler.start_work(work)
+    handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+    output_records = wiretap.output_records
+    assert 1 == len(output_records)
+    output = output_records[0].field.get("output")
+    assert 1 == output.get("id")
+    assert "John Doe" == output.get("employee_name")
+    assert 320800 == output.get("employee_salary")
+    assert 41 == output.get("employee_age")
