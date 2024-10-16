@@ -21,6 +21,7 @@ import time
 
 from pretenders.common.constants import FOREVER
 
+from streamsets.sdk.exceptions import RunError
 from streamsets.testframework.markers import sdc_min_version, sdc_min_version, web_client
 from streamsets.testframework.utils import get_random_string
 from streamsets import sdk
@@ -1080,7 +1081,7 @@ def test_per_status_actions_constant_retry(
         library=LIBRARY,
         request_endpoint=endpoint.recv_url(),
         max_batch_size_in_records=1,
-        batch_wait_time_in_ms=10,
+        batch_wait_time_in_ms=10000,
         ingestion_mode="Batch",
         per_status_actions=per_status_actions,
     )
