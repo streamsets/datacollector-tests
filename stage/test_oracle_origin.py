@@ -2,7 +2,7 @@
 
 import logging
 import string
-
+import re
 import pytest
 import sqlalchemy
 from streamsets.sdk.exceptions import RunError, RunningError
@@ -21,6 +21,99 @@ ROWS_IN_DATABASE = [{'ID': 1, 'NAME': 'Tucu'}, {'ID': 2, 'NAME': 'Martin'}, {'ID
 ROWS_IN_DATABASE2 = [{'NUM': 1, 'NICKNAME': 'Tucu'}, {'NUM': 2, 'NICKNAME': 'Martin'}, {'NUM': 3, 'NICKNAME': 'Xavi'},
                      {'NUM': 4, 'NICKNAME': 'Alex'}, {'NUM': 5, 'NICKNAME': 'Danilo'}, {'NUM': 6, 'NICKNAME': 'Mel'},
                      {'NUM': 7, 'NICKNAME': 'Joan'}, {'NUM': 8, 'NICKNAME': 'Hugo'}, {'NUM': 9, 'NICKNAME': 'Toni'}]
+
+NUM_ROWS_IN_BIG_DATABASE = 100000
+
+ROWS_IN_BIG_DATABASE = []
+for i in range(0, NUM_ROWS_IN_BIG_DATABASE):
+    ROWS_IN_BIG_DATABASE.append({'ID': i, 'NAME': f'Dragon #{i}'})
+
+@database('oracle')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('case_sensitive', [True, False])
+def test_oracle_consumer_task_distribution(sdc_builder, sdc_executor, database, case_sensitive):
+    """ Insert records in Oracle database table using sqlalchemy.
+    Then Oracle Origin is used to retrieve records from that table.
+    Verify records are received correctly using wiretap.
+    Verify number of tasks created by checking logs.
+
+    The pipeline looks like this:
+        oracle_consumer >> wiretap
+    """
+    # Table name has as prefix ORATST. Column names in uppercase.
+    if case_sensitive:
+        table_name = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_letters, 20)}'
+    else:
+        table_name = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Oracle consumer tables set up to table_name.
+    oracle_consumer = pipeline_builder.add_stage('Oracle Bulkload')
+    oracle_consumer.set_attributes(tables=[dict(schemaName='', tableName=table_name)], case_sensitive=case_sensitive)
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_consumer >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    _execute_pipeline(sdc_executor, database, pipeline, wiretap, table_name, oracle_consumer, ROWS_IN_BIG_DATABASE)
+
+    # Checking logs to see how many tasks have been created
+    logs = sdc_executor.get_logs(pipeline=pipeline, severity='INFO')
+    pattern = ".* tasks created to consume all the information.*"
+    regex = re.compile(pattern)
+    matches = re.findall(regex, str(logs))
+    if len(matches) > 0:
+        for match in matches:
+            task_created = int(match[match.find("OracleSource - ")+14:match.find("tasks created to consume all the information")].strip())
+            logger.info("Tasks created: '%d'", task_created)
+            assert task_created > 1, 'Expecting multiple task to be created'
+    else:
+        assert False, 'No log found with the pattern ['+pattern+']. Maybe there are more than 70 INFO logs in this pipeline.'
+
+
+@database('oracle')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('case_sensitive', [True, False])
+def test_oracle_consumer_task_distribution_with_min_task_size_greater_than_data_size(sdc_builder, sdc_executor, database, case_sensitive):
+    """ Insert records in Oracle database table using sqlalchemy.
+    Then Oracle Origin is used to retrieve records from that table.
+    Verify records are received correctly using wiretap.
+    Verify number of tasks created by checking logs.
+
+    The pipeline looks like this:
+        oracle_consumer >> wiretap
+    """
+    # Table name has as prefix ORATST. Column names in uppercase.
+    if case_sensitive:
+        table_name = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_letters, 20)}'
+    else:
+        table_name = f'{SRC_TABLE_PREFIX}_{get_random_string(string.ascii_uppercase, 20)}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Oracle consumer tables set up to table_name.
+    oracle_consumer = pipeline_builder.add_stage('Oracle Bulkload')
+    oracle_consumer.set_attributes(tables=[dict(schemaName='', tableName=table_name)], case_sensitive=case_sensitive, minimum_task_size=NUM_ROWS_IN_BIG_DATABASE)
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_consumer >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    _execute_pipeline(sdc_executor, database, pipeline, wiretap, table_name, oracle_consumer, ROWS_IN_BIG_DATABASE)
+
+    # Checking logs to see how many tasks have been created
+    logs = sdc_executor.get_logs(pipeline=pipeline, severity='INFO')
+    pattern = ".* tasks created to consume all the information.*"
+    regex = re.compile(pattern)
+    matches = re.findall(regex, str(logs))
+    if len(matches) > 0:
+        for match in matches:
+            task_created = int(match[match.find("OracleSource - ")+14:match.find("tasks created to consume all the information")].strip())
+            logger.info("Tasks created: '%d'", task_created)
+            assert task_created == 1, 'Expecting only one task to be created'
+    else:
+        assert False, 'No log found with the pattern ['+pattern+']. Maybe there are more than 70 INFO logs in this pipeline.'
 
 
 @database('oracle')
@@ -568,7 +661,7 @@ def _create_table(database, table_name, primary_key_column, other_column):
     return table
 
 
-def _execute_pipeline(sdc_executor, database, pipeline, wiretap, table_name, oracle_consumer):
+def _execute_pipeline(sdc_executor, database, pipeline, wiretap, table_name, oracle_consumer, data = ROWS_IN_DATABASE):
     """
     Executes the given pipeline and verifies that the output is correct
     :param sdc_executor: data collector executor
@@ -576,13 +669,14 @@ def _execute_pipeline(sdc_executor, database, pipeline, wiretap, table_name, ora
     :param pipeline: pipeline to be executed
     :param table_name: name of the table
     :param oracle_consumer: oracle bulkload stage
+    :param data: data to insert in the table
     """
 
     table = _create_table(database, table_name, 'ID', 'NAME')
 
     try:
         connection = database.engine.connect()
-        connection.execute(table.insert(), ROWS_IN_DATABASE)
+        connection.execute(table.insert(), data)
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -590,8 +684,12 @@ def _execute_pipeline(sdc_executor, database, pipeline, wiretap, table_name, ora
         # Records are retrieved from different batches.
         output_records_values = [{'ID': record.field['ID'], 'NAME': record.field['NAME']}
                                  for record in wiretap.output_records]
+        output_records_values = sorted(output_records_values,
+                                key=lambda x: x['ID'])
 
-        assert output_records_values == ROWS_IN_DATABASE
+        assert len(output_records_values) == len(data)
+        for output_record, inserted_record in zip(output_records_values, data):
+            assert output_record == inserted_record
 
     finally:
         # Table is deleted
