@@ -17,11 +17,14 @@
 import json
 import logging
 import string
+import pytest
 
 from streamsets.testframework.markers import influxdb
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
+
+SDC_MAX_VERSION = '6.0.0'
 
 
 @influxdb
@@ -30,6 +33,9 @@ def test_influxdb_destination(sdc_builder, sdc_executor, influxdb):
 
         dev_raw_data_source >> influxdb_destination
     """
+    if Version(sdc_executor.version) >= Version('6.0.0'):
+        pytest.skip(f'Influx DB destination test only run against SDC < {SDC_MAX_VERSION}')
+
     client = influxdb.client
 
     measurement = get_random_string(string.ascii_letters, 10)

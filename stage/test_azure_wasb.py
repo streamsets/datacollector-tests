@@ -19,7 +19,9 @@ import time
 
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
+
+SDC_MAX_VERSION = '6.0.0'
 
 from .utils.utils_azure import create_blob_container
 
@@ -45,6 +47,9 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
         hadoop_fs_standalone >> wiretap
                              >= pipeline_finished_executor
     """
+    if Version(sdc_executor.version) >= Version('6.0.0'):
+        pytest.skip(f'Test Hadoop FS Standalone Origin Simple test only run against SDC < {SDC_MAX_VERSION}')
+
     no_of_records = 20
     no_of_threads = 10
     files_dir_name = get_random_string(string.ascii_letters, 10)
