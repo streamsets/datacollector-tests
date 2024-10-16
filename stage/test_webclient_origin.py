@@ -23,7 +23,7 @@ from pretenders.common.constants import FOREVER
 
 from streamsets.sdk.exceptions import RunError
 from streamsets.testframework.markers import sdc_min_version, sdc_min_version, web_client
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 from streamsets import sdk
 
 from stage.utils.webclient import (
@@ -45,6 +45,13 @@ DEFAULT_TIMEOUT_IN_SEC = 30
 
 logger = logging.getLogger(__name__)
 pytestmark = [sdc_min_version(RELEASE_VERSION), web_client]
+
+
+@pytest.fixture(autouse=True)
+def skip_5_11_tests(sdc_builder):
+    if Version(sdc_builder.version) == Version('5.11.0'):
+        pytest.skip('This test is expected to fail in Version 5.11.0 as it got fixed in'
+                    ' https://review.streamsets.net/c/datacollector/+/77887')
 
 
 def test_hello_world(sdc_builder, sdc_executor, cleanup, server, test_name):

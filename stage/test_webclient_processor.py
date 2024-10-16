@@ -32,6 +32,7 @@ from stage.utils.webclient import (
 )
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
+from streamsets.testframework.utils import Version
 
 import logging
 from random import randint
@@ -40,6 +41,13 @@ DEFAULT_TIMEOUT_IN_SEC = 30
 
 logger = logging.getLogger(__name__)
 pytestmark = [sdc_min_version(RELEASE_VERSION), web_client]
+
+
+@pytest.fixture(autouse=True)
+def skip_5_11_tests(sdc_builder):
+    if Version(sdc_builder.version) == Version('5.11.0'):
+        pytest.skip('This test is expected to fail in Version 5.11.0 as it got fixed in'
+                    ' https://review.streamsets.net/c/datacollector/+/77887')
 
 
 @pytest.mark.parametrize(
