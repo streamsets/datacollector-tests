@@ -4271,7 +4271,10 @@ def test_type_conversion_error_contains_helpful_information(
         assert len(error_records) == num_records
         for error_record in error_records:
             if Version(sdc_executor.version) >= Version('5.10.0'):
-                check_error_information_v510(error_record.header['errorCode'], error_record.header['errorStackTrace'])
+                error_details = error_record.header['technicalMessage'] \
+                    if Version(sdc_executor.version) >= Version('6.0.0') \
+                    else error_record.header['errorStackTrace']
+                check_error_information_v510(error_record.header['errorCode'], error_details)
             else:
                 check_error_information(error_record.header['errorCode'], error_record.header['errorMessage'], True)
 
