@@ -33,7 +33,8 @@ HDP_LIBRARY_NAME = 'streamsets-datacollector-hdp_3_1-lib'
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
-        data_collector.add_stage_lib(HDP_LIBRARY_NAME)
+        if Version(data_collector.version) < Version(SDC_MAX_VERSION):
+            data_collector.add_stage_lib(HDP_LIBRARY_NAME)
 
     return hook
 
@@ -47,7 +48,7 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
         hadoop_fs_standalone >> wiretap
                              >= pipeline_finished_executor
     """
-    if Version(sdc_executor.version) >= Version('6.0.0'):
+    if Version(sdc_executor.version) >= Version(SDC_MAX_VERSION):
         pytest.skip(f'Test Hadoop FS Standalone Origin Simple test only run against SDC < {SDC_MAX_VERSION}')
 
     no_of_records = 20
