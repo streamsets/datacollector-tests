@@ -14,6 +14,7 @@
 
 import logging
 import string
+import time
 
 import pytest
 from streamsets.testframework.decorators import stub
@@ -88,6 +89,7 @@ def test_stream_name(sdc_builder, sdc_executor, aws, test_name, stream_generator
         expected_messages = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -148,6 +150,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, aws):
         expected_messages = set('Message {0}'.format(i) for i in range(100))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -207,6 +210,7 @@ def test_resume_offset(sdc_builder, sdc_executor, aws):
         expected_messages_0 = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages_0]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline
@@ -217,6 +221,7 @@ def test_resume_offset(sdc_builder, sdc_executor, aws):
         expected_messages_1 = set('Message {0}'.format(i) for i in range(10,20))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages_1]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert

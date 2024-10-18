@@ -63,6 +63,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
         expected_messages = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -150,6 +151,7 @@ def test_kinesis_consumer_additional_properties(sdc_builder, sdc_executor, aws, 
         expected_messages = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -202,6 +204,7 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
 
         # 1. Publish data to the stream
         put_records = [{'Data': f'First Message {i}', 'PartitionKey': '111'} for i in range(10)]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # 2. Wait and store timestamp
@@ -211,6 +214,7 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
         # 3. Publish new data
         expected_messages = set('Second Message {0}'.format(i) for i in range(10))
         put_records = [{'Data': f'Second Message {i}', 'PartitionKey': '111'} for i in range(10)]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # 4. Build consumer pipeline using timestamp
@@ -276,6 +280,7 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         expected_messages = set('Message {0}'.format(i) for i in range(no_of_msg))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -290,6 +295,7 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         expected_messages = set('Message B {0}'.format(i) for i in range(no_of_msg))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -354,6 +360,7 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
         expected_messages = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -404,6 +411,7 @@ def test_kinesis_consumer_assume_role_with_external_id(sdc_builder, sdc_executor
         expected_messages = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -476,6 +484,7 @@ def test_kinesis_consumer_other_region_and_vpc_endpoint_only_for_kinesis_service
         expected_messages = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
@@ -551,6 +560,7 @@ def test_kinesis_consumer_using_specific_connection_for_dynamodb_and_cloudwatch(
         expected_messages = set('Message {0}'.format(i) for i in range(10))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
