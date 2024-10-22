@@ -637,7 +637,8 @@ def get_num_tasks_created(sdc_executor, pipeline):
     matches = re.findall(regex, str(logs))
     if len(matches) > 0:
         for match in matches:
-            initial_position = match.find("OracleSource - ") + 14
+            previous_subtext = "OracleSource - "
+            initial_position = match.find(previous_subtext) + len(previous_subtext)
             final_position = match.find("tasks created to consume all the information")
             task_created = int(match[initial_position:final_position].strip())
             logger.info("Tasks created: '%d'", task_created)
