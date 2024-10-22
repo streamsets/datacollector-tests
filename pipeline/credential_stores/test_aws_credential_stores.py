@@ -23,8 +23,8 @@ from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
 from pipeline.credential_stores.credential_stores_test_set_up \
-    import (_create_test_pipeline, _create_and_populate_table, _check_pipeline_records, _drop_table, _stop_pipeline, \
-            DEFAULT_PASSWORD_FIELD, DEFAULT_USERNAME_FIELD)
+    import (_create_test_pipeline, _create_test_pipeline_to_trash, _create_and_populate_table, _check_pipeline_records,
+            _drop_table, _stop_pipeline, DEFAULT_PASSWORD_FIELD, DEFAULT_USERNAME_FIELD)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ def test_aws_credential_store(sdc_builder, sdc_executor, database, credential_st
         pytest.skip(f"This test only runs against AWS Credential Stores")
 
     connection = None
+    pipeline = None
 
     table_name = get_random_string(string.ascii_lowercase, 10)
 
@@ -68,11 +69,9 @@ def test_aws_credential_store(sdc_builder, sdc_executor, database, credential_st
             _format_get_credential(credential_store, password_secret, DEFAULT_PASSWORD_FIELD)
         )
 
-        _create_and_populate_table(database, table_name)
+        connection = _create_and_populate_table(database, table_name)
 
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=60)
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         _check_pipeline_records(wiretap.output_records)
     finally:
@@ -107,6 +106,7 @@ def test_aws_credential_store_with_options(sdc_builder, sdc_executor, database, 
         pytest.skip(f"This test only runs against AWS Credential Stores")
 
     connection = None
+    pipeline = None
 
     table_name = get_random_string(string.ascii_lowercase, 10)
 
@@ -139,11 +139,9 @@ def test_aws_credential_store_with_options(sdc_builder, sdc_executor, database, 
             )
         )
 
-        _create_and_populate_table(database, table_name)
+        connection = _create_and_populate_table(database, table_name)
 
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=60)
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         _check_pipeline_records(wiretap.output_records)
 
@@ -182,7 +180,7 @@ def test_aws_credential_store_wrong_cred_store(
     calls.
 
     The pipeline created by the test looks like:
-        JDBC Multitable Consumer >> Wiretap
+        JDBC Multitable Consumer >> Trash
     """
     if not isinstance(credential_store, AWSCredentialStore):
         pytest.skip(f"This test only runs against AWS Credential Stores")
@@ -191,12 +189,13 @@ def test_aws_credential_store_wrong_cred_store(
     secret_name = f'test_aws_credential_store_wrong_cred_store_{get_random_string(string.ascii_lowercase, 20)}'
 
     connection = None
+    pipeline = None
 
     try:
         logger.info('Preparing the credential store secrets...')
         _create_secret(credential_store, secret_name, DEFAULT_PASSWORD_FIELD, database.password)
 
-        pipeline, wiretap = _create_test_pipeline(
+        pipeline = _create_test_pipeline_to_trash(
             sdc_builder,
             sdc_executor,
             database,
@@ -212,7 +211,7 @@ def test_aws_credential_store_wrong_cred_store(
             )
         )
 
-        _create_and_populate_table(database, table_name)
+        connection = _create_and_populate_table(database, table_name)
         try:
             sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=60)
             assert False, 'An error should have stopped the pipeline due to using an invented credential store id'
@@ -235,7 +234,7 @@ def test_aws_credential_store_wrong_group(sdc_builder, sdc_executor, database, c
     is properly detected. Tests both the ${credential:get(...)} and the ${credential:getWithOptions(...)} calls.
 
     The pipeline created by the test looks like:
-        JDBC Multitable Consumer >> Wiretap
+        JDBC Multitable Consumer >> Trash
     """
     if not isinstance(credential_store, AWSCredentialStore):
         pytest.skip(f"This test only runs against AWS Credential Stores")
@@ -244,12 +243,13 @@ def test_aws_credential_store_wrong_group(sdc_builder, sdc_executor, database, c
     secret_name = f'test_aws_credential_store_wrong_group_{get_random_string(string.ascii_lowercase, 20)}'
 
     connection = None
+    pipeline = None
 
     try:
         logger.info('Preparing the credential store secrets...')
         _create_secret(credential_store, secret_name, DEFAULT_PASSWORD_FIELD, database.password)
 
-        pipeline, wiretap = _create_test_pipeline(
+        pipeline = _create_test_pipeline_to_trash(
             sdc_builder,
             sdc_executor,
             database,
@@ -265,7 +265,7 @@ def test_aws_credential_store_wrong_group(sdc_builder, sdc_executor, database, c
             )
         )
 
-        _create_and_populate_table(database, table_name)
+        connection = _create_and_populate_table(database, table_name)
         try:
             sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=60)
             assert False, 'An error should have stopped the pipeline due to using an invented group id'
@@ -289,7 +289,7 @@ def test_aws_credential_store_wrong_secret(sdc_builder, sdc_executor, database, 
     calls.
 
     The pipeline created by the test looks like:
-        JDBC Multitable Consumer >> Wiretap
+        JDBC Multitable Consumer >> Trash
     """
     if not isinstance(credential_store, AWSCredentialStore):
         pytest.skip(f"This test only runs against AWS Credential Stores")
@@ -298,12 +298,13 @@ def test_aws_credential_store_wrong_secret(sdc_builder, sdc_executor, database, 
     secret_name = f'test_aws_credential_store_wrong_secret_{get_random_string(string.ascii_lowercase, 20)}'
 
     connection = None
+    pipeline = None
 
     try:
         logger.info('Preparing the credential store secrets...')
         _create_secret(credential_store, secret_name, DEFAULT_PASSWORD_FIELD, database.password)
 
-        pipeline, wiretap = _create_test_pipeline(
+        pipeline = _create_test_pipeline_to_trash(
             sdc_builder,
             sdc_executor,
             database,
@@ -319,7 +320,7 @@ def test_aws_credential_store_wrong_secret(sdc_builder, sdc_executor, database, 
             )
         )
 
-        _create_and_populate_table(database, table_name)
+        connection = _create_and_populate_table(database, table_name)
         try:
             sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=60)
             assert False, 'An error should have stopped the pipeline due to using a non-existing secret name'
@@ -342,7 +343,7 @@ def test_aws_credential_store_wrong_key(sdc_builder, sdc_executor, database, cre
     calls.
 
     The pipeline created by the test looks like:
-        JDBC Multitable Consumer >> Wiretap
+        JDBC Multitable Consumer >> Trash
     """
     if not isinstance(credential_store, AWSCredentialStore):
         pytest.skip(f"This test only runs against AWS Credential Stores")
@@ -352,12 +353,13 @@ def test_aws_credential_store_wrong_key(sdc_builder, sdc_executor, database, cre
     invented_field = 'invented_field'
 
     connection = None
+    pipeline = None
 
     try:
         logger.info('Preparing the credential store secrets...')
         _create_secret(credential_store, secret_name, DEFAULT_PASSWORD_FIELD, database.password)
 
-        pipeline, wiretap = _create_test_pipeline(
+        pipeline = _create_test_pipeline_to_trash(
             sdc_builder,
             sdc_executor,
             database,
@@ -373,7 +375,7 @@ def test_aws_credential_store_wrong_key(sdc_builder, sdc_executor, database, cre
             )
         )
 
-        _create_and_populate_table(database, table_name)
+        connection = _create_and_populate_table(database, table_name)
         try:
             sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=60)
             assert False, 'An error should have stopped the pipeline due to using a non-existing field key'
@@ -451,8 +453,4 @@ def _format_custom_get_credential(store_id, group_id, secret_name, field_name, o
             options
         )
     else:
-        return CREDENTIAL_STORE_EXPRESSION.format(
-            store_id,
-            group_id,
-            f'{secret_name}&{field_name}'
-        )
+        return CREDENTIAL_STORE_EXPRESSION.format(store_id, group_id, f'{secret_name}&{field_name}')

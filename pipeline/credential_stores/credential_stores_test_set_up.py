@@ -34,7 +34,9 @@ def _create_test_pipeline(sdc_builder, sdc_executor, database, credential_store,
 
     wiretap = pipeline_builder.add_wiretap()
 
-    jdbc_multitable_consumer >> wiretap.destination
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+
+    jdbc_multitable_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(database, credential_store)
     sdc_executor.add_pipeline(pipeline)
 
@@ -49,13 +51,42 @@ def _create_test_pipeline(sdc_builder, sdc_executor, database, credential_store,
     return pipeline, wiretap
 
 
+def _create_test_pipeline_to_trash(sdc_builder, sdc_executor, database, credential_store, table_name, user, password):
+    logger.info('Creating the pipeline...')
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(
+        table_configs=[{"tablePattern": f'%{table_name}%'}]
+    )
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    logger.info('Updating the pipeline to use the credential store secrets')
+    jdbc_multitable_consumer = pipeline.stages.get(label=jdbc_multitable_consumer.label)
+    jdbc_multitable_consumer.set_attributes(
+        username=user,
+        password=password
+    )
+    sdc_executor.update_pipeline(pipeline)
+
+    return pipeline
+
+
 def _create_and_populate_table(database, table_name):
-    logger.info(f'Creating table \'{table_name}\'...')
     connection = database.engine.connect()
+
+    logger.info(f'Creating table \'{table_name}\'...')
     connection.execute(f'CREATE TABLE {table_name}(id int, name varchar(32), primary key (id))')
 
     logger.info('Adding a record into the table...')
     connection.execute(f'INSERT INTO {table_name} VALUES ({DEFAULT_ID}, \'{DEFAULT_NAME}\')')
+
+    return connection
 
 
 def _check_pipeline_records(records):
