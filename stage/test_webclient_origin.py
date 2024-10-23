@@ -1088,9 +1088,10 @@ def test_per_status_actions_constant_retry(
         library=LIBRARY,
         request_endpoint=endpoint.recv_url(),
         max_batch_size_in_records=1,
-        batch_wait_time_in_ms=10000,
+        batch_wait_time_in_ms=10,
         ingestion_mode="Batch",
         per_status_actions=per_status_actions,
+        wait_time_between_requests_in_ms=35000,
     )
     wiretap = pipeline_builder.add_wiretap()
     webclient_origin >> wiretap.destination
