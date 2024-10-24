@@ -19,7 +19,7 @@ from streamsets.testframework.markers import sdc_min_version, web_client
 from streamsets.sdk.exceptions import RunError
 
 from stage import _wait_for_pipeline_statuses
-from stage.test_webclient_origin import per_status_action_parameters
+from stage.test_webclient_origin import per_status_action_parameters, per_status_action_parameters_unknown_status
 from stage.utils.webclient import (
     deps,
     free_port,
@@ -304,7 +304,10 @@ def test_common_and_security_header(sdc_builder, sdc_executor, cleanup, server, 
     per_status_action_parameters
 )
 def test_per_status_actions( sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status,
-                             success, hits, err, constant_retry=False):
+                             success, hits, err, retry=False):
+    """
+    Tests for Per-Status Actions.
+    """
 
     from flask import json, Response
 
@@ -341,7 +344,7 @@ def test_per_status_actions( sdc_builder, sdc_executor, cleanup, server, test_na
         handler.start_work(work)
         _wait_for_pipeline_statuses(sdc_executor, pipeline, ["FINISHED"])
         history = sdc_executor.get_pipeline_history(pipeline)
-        if constant_retry:
+        if retry:
             assert history.latest.metrics.counter('stage.WebClient_01.outputRecords.counter').count == 0
             assert history.latest.metrics.counter('stage.WebClient_01.errorRecords.counter').count == 1
         else:
@@ -352,6 +355,20 @@ def test_per_status_actions( sdc_builder, sdc_executor, cleanup, server, test_na
             handler.start_work(work)
             handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
         assert err in exception_info.value.message
+
+
+@sdc_min_version("6.1.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, success, hits, err",
+    per_status_action_parameters_unknown_status
+)
+def test_per_status_actions_unknown_status( sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status,
+                             success, hits, err):
+    """
+    Tests for Per-Status Actions for Unknown Status.
+    """
+
+    test_per_status_actions(sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err)
 
 
 @sdc_min_version("6.0.0")
@@ -396,9 +413,64 @@ def test_per_status_actions( sdc_builder, sdc_executor, cleanup, server, test_na
         ]
     ]
 )
-def test_per_status_actions_constant_retry(
+def test_per_status_actions_retry(
         sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err
 ):
+    """
+    Tests for Per-Status Actions with Retry action selected.
+    """
+
+    test_per_status_actions(sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err, True)
+
+
+
+@sdc_min_version("6.1.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, success, hits, err",
+    [
+        [
+            [
+                {
+                    "codes": [
+                        "Default"
+                    ],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 5,
+                    "failure": "Error"
+                }
+            ], 599, True, 1, None
+        ],
+        [
+            [
+                {
+                    "codes": [
+                        "Default"
+                    ],
+                    "action": "Record",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 5,
+                    "failure": "Error"
+                },
+                {
+                    "codes": [
+                        "Unknown"
+                    ],
+                    "action": "ConstantRetry",
+                    "backoff": "${unit:toMilliseconds(1, second)}",
+                    "retries": 5,
+                    "failure": "Error"
+                }
+            ], 599, True, 1, None
+        ]
+    ]
+)
+def test_per_status_actions_retry_unknown_status(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err
+):
+    """
+    Tests for Per-Status Actions for Unknown Status with Retry action selected.
+    """
 
     test_per_status_actions(sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err, True)
 

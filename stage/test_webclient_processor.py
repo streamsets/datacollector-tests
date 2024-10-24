@@ -18,7 +18,8 @@ from streamsets.testframework.markers import sdc_min_version, web_client
 from streamsets.sdk.exceptions import RunError
 
 from stage import _wait_for_pipeline_statuses
-from stage.test_webclient_origin import constant_retry_parameters, per_status_action_parameters
+from stage.test_webclient_origin import retry_parameters, per_status_action_parameters, \
+    retry_parameters_unknown_status, per_status_action_parameters_unknown_status
 from stage.utils.webclient import (
     deps,
     free_port,
@@ -499,6 +500,9 @@ def test_endpoint_evaluation(sdc_builder, sdc_executor, cleanup, server, test_na
 def test_per_status_actions(
         sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err
 ):
+    """
+    Tests for Per-Status Actions.
+    """
 
     from flask import json, Response
 
@@ -547,14 +551,32 @@ def test_per_status_actions(
         assert err in exception_info.value.message
 
 
+@sdc_min_version("6.1.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, success, hits, err",
+    per_status_action_parameters_unknown_status
+)
+def test_per_status_actions_unknown_status(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err):
+    """
+        Tests for Per-Status Actions for Unknown Status.
+    """
+
+    test_per_status_actions(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, success, hits, err)
+
+
 @sdc_min_version("6.0.0")
 @pytest.mark.parametrize(
     "per_status_actions, status, hits, err",
-    constant_retry_parameters
+    retry_parameters
 )
-def test_per_status_actions_constant_retry(
+def test_per_status_actions_retry(
         sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, hits, err
 ):
+    """
+    Tests for Per-Status Actions with Retry action selected.
+    """
 
     from flask import json, Response
 
@@ -597,8 +619,25 @@ def test_per_status_actions_constant_retry(
     error_records = wiretap.error_records
     assert 1 == len(error_records)
     for error_record in error_records:
-        assert error_record.header._data.get("errorMessage").startswith("WEB_CLIENT_RUNTIME_0067"), \
-            f'WEB_CLIENT_RUNTIME_0067 was expected instead it failed with {error_records[0].header._data.get("errorCode")}'
+        assert error_record.header._data.get("errorMessage").startswith(err), \
+            f'{err} was expected instead it failed with {error_records[0].header._data.get("errorCode")}'
+
+
+
+@sdc_min_version("6.1.0")
+@pytest.mark.parametrize(
+    "per_status_actions, status, hits, err",
+    retry_parameters_unknown_status
+)
+def test_per_status_actions_retry_unknown_status(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, hits, err):
+    """
+    Tests for Per-Status Actions for Unknown Status with Retry action selected.
+    """
+
+    test_per_status_actions_retry(
+        sdc_builder, sdc_executor, cleanup, server, test_name, per_status_actions, status, hits, err)
+
 
 
 @pytest.mark.parametrize('mime_type, response_data, data_format', 
