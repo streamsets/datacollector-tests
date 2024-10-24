@@ -24,6 +24,7 @@ from streamsets.sdk.utils import get_random_string
 from streamsets.sdk.exceptions import RunError, RunningError
 from streamsets.testframework.sdc import DataCollector
 from streamsets.testframework.sdc_models import PipelineBuilder, Stage, Pipeline
+from streamsets.testframework.utils import Version
 
 # from CommonDatabaseHeader.java
 PRIMARY_KEY_COLUMN_OLD_VALUE = 'jdbc.primaryKey.before'
@@ -671,11 +672,20 @@ class MultithreadRecordCreator:
 
 
 class OnRecordErrorStatus:
-    def __init__(self, error_message: str, input_records: int, output_records: int, error_records: int):
+    def __init__(self, error_message, input_records: int, output_records: int, error_records: int):
         self.error_message = error_message
         self.input_records = input_records
         self.output_records = output_records
         self.error_records = error_records
+
+    def get_error_message(self, sdc_executor_version: str):
+        final_error_message = self.error_message
+        if isinstance(self.error_message, dict):
+            for key in self.error_message.keys():
+                if sdc_executor_version < Version(key):
+                    break
+                final_error_message = self.error_message.get(key)
+        self.error_message = final_error_message
 
 
 @pytest.fixture
@@ -692,6 +702,7 @@ class OnRecordErrorHandler:
     def run_and_handle_on_record_error(self, pipeline_handler: DataLoadingPipelineHandler):
         """Asserts that the On Record Error configuration was honored"""
         if self.on_record_error == 'STOP_PIPELINE':
+            self.on_record_error_status.get_error_message(Version(pipeline_handler.sdc_executor.version))
             self.handle_stop_pipeline(pipeline_handler)
         elif self.on_record_error == 'DISCARD':
             self.handle_discard(pipeline_handler)

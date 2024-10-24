@@ -83,7 +83,9 @@ def test_on_record_error(sdc_builder, sdc_executor, teradata, cleanup, teradata_
 @pytest.mark.parametrize('on_record_error, on_record_error_status, test_data, expected_data', [
     (
             'STOP_PIPELINE',
-            OnRecordErrorStatus("DATA_LOADING_23 - Record is missing the 'id' key field", 0, 0, 0),
+            OnRecordErrorStatus({'5.11.0': "DATA_LOADING_23 - Record is missing the 'id' key field",
+                                 '6.0.0': "DATA_LOADING_23 - The record is missing the 'id' field, which is a primary key"},
+                                0, 0, 0),
             MISSING_FIELD_ROWS,
             []  # nothing in the db, pipeline gets stopped on the spot
     ),
