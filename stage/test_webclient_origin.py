@@ -48,8 +48,8 @@ pytestmark = [sdc_min_version(RELEASE_VERSION), web_client]
 
 
 @pytest.fixture(autouse=True)
-def skip_5_11_tests(sdc_builder):
-    if Version(sdc_builder.version) == Version('5.11.0'):
+def skip_5_11_tests(sdc_executor):
+    if Version(sdc_executor.version) in (Version('5.11.0'), Version('5.12.0')):
         pytest.skip('This test is expected to fail in Version 5.11.0 as it got fixed in'
                     ' https://review.streamsets.net/c/datacollector/+/77887')
 
