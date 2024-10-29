@@ -77,7 +77,7 @@ def test_many_field_processor_stages(sdc_builder, sdc_executor):
                                                      'regex': '(.*)',
                                                      'groupsToShow': '1'}])
 
-    dev_raw_data_source >> field_remover >> value_replacer >> field_type_converter >> field_hasher
+    dev_raw_data_source >> field_remover >> field_type_converter >> field_hasher
     field_hasher >> field_masker >> benchmark_stages.destination
 
     pipeline = pipeline_builder.build()
