@@ -21,7 +21,7 @@ import string
 
 from streamsets.sdk.exceptions import StartError, StartingError, RunError, RunningError
 from streamsets.sdk.utils import get_random_string, Version
-from streamsets.testframework.markers import snowflake, sdc_min_version
+from streamsets.testframework.markers import aws, snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -1287,6 +1287,117 @@ def test_max_chars_per_column_property(
         status = response.get('status')
         logger.info('Pipeline status %s ...', status)
         assert 'DATA_LOADING_46' in e.message
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
+@sdc_min_version('6.1.0')
+@aws('s3')
+@pytest.mark.parametrize('specify_sts_region', [
+    None,
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_aws_storage_with_assume_role(sdc_builder, sdc_executor, snowflake, aws, specify_sts_region):
+    """
+    Tests that the Snowflake Bulk Origin can use assume role when using AWS S3 stage location.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location="AWS_S3")
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location="AWS_S3",
+                                    snowflake_stage_name=stage_name,
+                                    **{get_table_config_arg_name(sdc_builder.version): [{'inclusionPattern': table_name}]},
+                                    compressed_file=False,
+                                    assume_role=True,
+                                    role_arn=aws.iam_role)
+
+    if specify_sts_region == 'use_region':
+        snowflake_origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_region':
+        snowflake_origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts="OTHER",
+            custom_region_for_sts=aws.region
+        )
+    elif specify_sts_region == 'use_regional_endpoint':
+        snowflake_origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=f"sts.{aws.region}.amazonaws.com"
+        )
+    elif specify_sts_region == 'use_regional_vpc_endpoint':
+        snowflake_origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=aws.sts_vpc_endpoint
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_signing_region':
+        snowflake_origin.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_custom_signing_region':
+        snowflake_origin.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts="OTHER",
+            custom_signing_region_for_sts=aws.region
+        )
+    else:
+        snowflake_origin.set_attributes(
+            region_definition_for_sts="NOT_SPECIFIED",
+        )
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        column_names = create_table_and_insert_values(engine, table_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        expected_records = DEFAULT_RECORDS
+
+        # Check that the number of records is equal to what we expect
+        assert len(records) == len(expected_records), \
+            f'{len(expected_records)} records should have been processed but only {len(records)} were found'
+
+        for record, expected_record in zip(records, expected_records):
+            assert record.header.values[DATABASE_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_DATABASE
+            assert record.header.values[SCHEMA_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_SCHEMA
+            assert record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME] == table_name
+
+            for i in range(0, len(column_names)):
+                # Check that each row has the needed columns ...
+                assert column_names[i] in record.field, f'The record should have a column named {column_names[i]}'
+                # ... and that the value contained is what we expect
+                assert expected_record[i] == record.field[column_names[i]], \
+                    f'The value of the field {column_names[i]} should have been {expected_record[i]},' \
+                    f' but it is {record.field[column_names[i]]}'
     finally:
         snowflake.delete_staged_files(storage_path)
         snowflake.drop_entities(stage_name=stage_name)

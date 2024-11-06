@@ -180,6 +180,111 @@ def test_basic_parquet(sdc_builder, sdc_executor, snowflake):
                     staging_file_format='PARQUET')
 
 
+@snowflake
+@aws('s3')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_sts_region', [
+    None,
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_aws_storage_with_assume_role(sdc_builder, sdc_executor, snowflake, aws, specify_sts_region):
+    """Test that Snowflake Destination can use assume role when using AWS S3 stage location.
+
+    The pipeline looks like:
+        dev_raw_data_source  >> snowflake_destination
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Create a table and stage in Snowflake.
+    table = snowflake.create_table(table_name.lower())
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location='AWS_S3')
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    raw_data = '\n'.join(json.dumps(row) for row in ROWS_IN_DATABASE)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(stage_location='AWS_S3',
+                                         purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         assume_role=True,
+                                         role_arn=aws.iam_role
+                                         )
+
+    if specify_sts_region == 'use_region':
+        snowflake_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_region':
+        snowflake_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts="OTHER",
+            custom_region_for_sts=aws.region
+        )
+    elif specify_sts_region == 'use_regional_endpoint':
+        snowflake_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=f"sts.{aws.region}.amazonaws.com"
+        )
+    elif specify_sts_region == 'use_regional_vpc_endpoint':
+        snowflake_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=aws.sts_vpc_endpoint
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_signing_region':
+        snowflake_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_custom_signing_region':
+        snowflake_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts="OTHER",
+            custom_signing_region_for_sts=aws.region
+        )
+    else:
+        snowflake_destination.set_attributes(
+            region_definition_for_sts="NOT_SPECIFIED",
+        )
+
+    dev_raw_data_source >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert data_from_database == [(row['name'], row['id']) for row in ROWS_IN_DATABASE]
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()
+
+
 def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_kms=False, sas_token=False,
                     staging_file_format='CSV'):
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'

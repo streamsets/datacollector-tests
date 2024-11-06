@@ -138,12 +138,12 @@ def test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, use_inst
     table_name = f'stf_{get_random_string()}'
 
     engine = deltalake.engine
-    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    data = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Dev raw data source
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=DATA, stop_after_first_batch=True)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
 
     # AWS S3 destination
     s3_key = f'stf-deltalake/{get_random_string()}'
@@ -173,9 +173,249 @@ def test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, use_inst
         if Version(sdc_builder.version) < Version("5.7.0"):
             databricks_deltalake.set_attributes(use_instance_profile=True, access_key_id="", secret_access_key="")
         else:
-            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
-            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsAccessKeyId', '')
-            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsSecretAccessKey', '')
+            aws_config_prefix = 'config.s3Stage.connection.awsConfig'
+            deltalake = set_sdc_stage_config(deltalake, f"{aws_config_prefix}.credentialMode", 'WITH_IAM_ROLES')
+            deltalake = set_sdc_stage_config(deltalake, f"{aws_config_prefix}.awsAccessKeyId", '')
+            deltalake = set_sdc_stage_config(deltalake, f"{aws_config_prefix}.awsSecretAccessKey", '')
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        logger.info(f'Creating table {table_name} ...')
+        deltalake.create_table(table_name)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        # Assert data from deltalake table is same as what was input.
+        connection = deltalake.connect_engine(engine)
+        result = connection.execute(f'select * from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        expected_data = [tuple(v for v in d.values()) for d in ROWS_IN_DATABASE]
+
+        assert len(data_from_database) == len(expected_data)
+
+        assert expected_data == [(record['title'], record['author'], record['genre'], record['publisher'])
+                                 for record in data_from_database]
+        result.close()
+
+        # Assert that we actually purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] == 0
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+        _clean_up_databricks(deltalake, table_name)
+
+
+@aws('s3')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_region', [
+    None,
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_with_aws_s3_storage_using_different_region_configurations(
+        sdc_builder,
+        sdc_executor,
+        deltalake,
+        aws,
+        specify_region
+):
+    """Test for Databricks Delta Lake with AWS S3 storage using different S3 region configurations.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    table_name = f'stf_{get_random_string()}'
+
+    engine = deltalake.engine
+    data = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name=table_name,
+                                        purge_stage_file_after_ingesting=True
+                                        )
+
+    if specify_region == 'use_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_s3="SPECIFY_REGION",
+            region_for_s3=aws.formatted_region
+        )
+    elif specify_region == 'use_custom_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_s3="SPECIFY_REGION",
+            region_for_s3="OTHER",
+            custom_region_for_s3=aws.region
+        )
+    elif specify_region == 'use_regional_endpoint':
+        databricks_deltalake.set_attributes(
+            region_definition_for_s3="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_s3=f"s3.{aws.region}.amazonaws.com"
+        )
+    elif specify_region == 'use_regional_vpc_endpoint':
+        databricks_deltalake.set_attributes(
+            region_definition_for_s3="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_s3=aws.vpc_endpoint
+        )
+    elif specify_region == 'use_custom_endpoint_and_signing_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_s3="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_s3=aws.vpc_endpoint,
+            signing_region_for_s3=aws.formatted_region
+        )
+    elif specify_region == 'use_custom_endpoint_and_custom_signing_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_s3="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_s3=aws.vpc_endpoint,
+            signing_region_for_s3="OTHER",
+            custom_signing_region_for_s3=aws.region
+        )
+    else:
+        databricks_deltalake.set_attributes(
+            region_definition_for_s3="NOT_SPECIFIED",
+        )
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        logger.info(f'Creating table {table_name} ...')
+        deltalake.create_table(table_name)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        # Assert data from deltalake table is same as what was input.
+        connection = deltalake.connect_engine(engine)
+        result = connection.execute(f'select * from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        expected_data = [tuple(v for v in d.values()) for d in ROWS_IN_DATABASE]
+
+        assert len(data_from_database) == len(expected_data)
+
+        assert expected_data == [(record['title'], record['author'], record['genre'], record['publisher'])
+                                 for record in data_from_database]
+        result.close()
+
+        # Assert that we actually purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] == 0
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+        _clean_up_databricks(deltalake, table_name)
+
+
+@aws('s3')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_sts_region', [
+    None,
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+@pytest.mark.parametrize('use_instance_profile', [False, True])
+def test_with_aws_s3_storage_using_assume_role(
+        sdc_builder,
+        sdc_executor,
+        deltalake,
+        aws,
+        use_instance_profile,
+        specify_sts_region
+):
+    """Test for Databricks Delta Lake with AWS S3 storage using Assume Role with different STS region configuration.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    table_name = f'stf_{get_random_string()}'
+
+    engine = deltalake.engine
+    data = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name=table_name,
+                                        purge_stage_file_after_ingesting=True,
+                                        assume_role=True,
+                                        role_arn=aws.iam_role
+                                        )
+
+    if specify_sts_region == 'use_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts="OTHER",
+            custom_region_for_sts=aws.region
+        )
+    elif specify_sts_region == 'use_regional_endpoint':
+        databricks_deltalake.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=f"sts.{aws.region}.amazonaws.com"
+        )
+    elif specify_sts_region == 'use_regional_vpc_endpoint':
+        databricks_deltalake.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=aws.sts_vpc_endpoint
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_signing_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_custom_signing_region':
+        databricks_deltalake.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts="OTHER",
+            custom_signing_region_for_sts=aws.region
+        )
+    else:
+        databricks_deltalake.set_attributes(
+            region_definition_for_sts="NOT_SPECIFIED",
+        )
+
+    # In case of Instance Profile we set it to True and set keys to blank
+    if use_instance_profile:
+        aws_config_prefix = 'config.s3Stage.connection.awsConfig'
+        deltalake = set_sdc_stage_config(deltalake, f"{aws_config_prefix}.credentialMode", 'WITH_IAM_ROLES')
+        deltalake = set_sdc_stage_config(deltalake, f"{aws_config_prefix}.awsAccessKeyId", '')
+        deltalake = set_sdc_stage_config(deltalake, f"{aws_config_prefix}.awsSecretAccessKey", '')
 
     dev_raw_data_source >> databricks_deltalake
 
