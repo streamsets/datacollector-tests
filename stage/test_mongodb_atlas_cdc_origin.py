@@ -345,6 +345,115 @@ def test_mongodb_atlas_cdc_operation_types(sdc_builder, sdc_executor, mongodb, r
         mongodb.engine.drop_database(database)
 
 
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('read_changes_from', [
+    'CHANGE_STREAM',
+    'OPLOG'
+])
+@pytest.mark.parametrize('full_record_not_found_behaviour', ['DISCARD_RECORD', 'UPDATED_FIELDS_RECORD', 'SEND_TO_ERROR'])
+def test_mongodb_atlas_cdc_full_record_update_with_a_closely_followed_delete(
+        sdc_builder,
+        sdc_executor,
+        mongodb,
+        read_changes_from,
+        full_record_not_found_behaviour
+):
+    """
+    Update & delete the same record into MongoDB Atlas and read the changes with MongoDB Atlas CDC origin.
+    This test wants to check the behaviour when 'Get full record for updates' is active
+    and the updated record has been deleted before the pipeline processed it
+
+    The pipeline looks like:
+        mongodb_atlas_cdc_origin >> wiretap
+    """
+    if read_changes_from == 'CHANGE_STREAM' and mongodb.version[0] < 4:
+        pytest.skip("Initial offset in CHANGE STREAM mode is supported only by MongoDB 4.0 or newer")
+
+    database = f'test_mongodb_atlas_cdc_origin_{get_random_string(string.ascii_letters, 5)}'
+    collection = get_random_string(string.ascii_letters, 5)
+    number_of_records = 5
+
+    data = [
+        {'f1': i, 'f2': get_random_string(string.ascii_letters, 4), 'f3': get_random_string(string.ascii_letters, 4)}
+        for i in range(number_of_records)]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_cdc_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_CDC_ORIGIN)
+    mongodb_atlas_cdc_origin.set_attributes(read_changes_from=read_changes_from,
+                                            initial_offset='0',
+                                            include_namespaces=[f'{database}.{collection}'],
+                                            operation_types=['UPDATE'],
+                                            get_full_record_for_updates=True,
+                                            full_record_not_found_behaviour=full_record_not_found_behaviour)
+
+    # Configure MongoDB Atlas CDC to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_cdc_origin.tls_mode = 'NONE'
+        mongodb_atlas_cdc_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    mongodb_atlas_cdc_origin >> wiretap.destination
+
+    pipeline = (pipeline_builder.build(title=f'Test MongoDB Atlas CDC - Full record update'
+                                             f'[read_changes_from={read_changes_from}]'
+                                             f'[full_record_not_found_behaviour={full_record_not_found_behaviour}]')
+                .configure_for_environment(mongodb))
+
+    try:
+        # Start pipeline and verify the documents using wiretap.
+        sdc_executor.add_pipeline(pipeline)
+
+        # Insert data into the database
+        _write_in_mongodb_atlas(mongodb, database, collection, [{'f1': 0}])
+
+        data_ids = _get_documents_id(mongodb, database, collection)
+
+        # Update second element of the data already inserted into the database
+        _write_in_mongodb_atlas(mongodb, database, collection, {'f1': 0, 'f2': 'Updated'}, 'UPDATE')
+
+        # Delete first element of the data already inserted into the database
+        _write_in_mongodb_atlas(mongodb, database, collection, {'f1': 0}, 'DELETE')
+
+        # Adding one more update to have at least one record if the first one is discarded
+        _write_in_mongodb_atlas(mongodb, database, collection, [{'f1': 1}])
+        _write_in_mongodb_atlas(mongodb, database, collection, {'f1': 1, 'f2': 'Updated'}, 'UPDATE')
+
+        sdc_executor.start_pipeline(pipeline)
+        pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        if pipeline_status != 'RUNNING':
+            pytest.fail(f"Pipeline status is not RUNNING. The current status is {pipeline_status}")
+
+        if full_record_not_found_behaviour == 'DISCARD_RECORD':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            stage_errors = sdc_executor.get_stage_errors(pipeline, mongodb_atlas_cdc_origin)
+            assert len(wiretap.output_records) == 1, f"Expected 1 output record but found {len(wiretap.output_records)}"
+            assert len(stage_errors) == 0, f"Expected no error records but found {len(stage_errors)}"
+        elif full_record_not_found_behaviour == 'UPDATED_FIELDS_RECORD':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
+            records = wiretap.output_records
+            stage_errors = sdc_executor.get_stage_errors(pipeline, mongodb_atlas_cdc_origin)
+            assert len(records) == 2, f"Expected 2 output records but found {len(records)}"
+            assert len(stage_errors) == 0, f"Expected no error records but found {len(stage_errors)}"
+            # If we are asked for the full record, but it doesn't exist in the DB,
+            # we are going to return only the updated fields
+            assert records[0].get_field_data('/')['_id'] == str(data_ids[0]['_id'])
+            assert 'f1' not in records[0].get_field_data('/')
+            assert records[0].get_field_data('/')['f2'] == 'Updated'
+        elif full_record_not_found_behaviour == 'ERROR_RECORD':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            assert len(wiretap.output_records) == 1, f"Expected 1 output record but found {len(wiretap.output_records)}"
+            stage_errors = sdc_executor.get_stage_errors(pipeline, mongodb_atlas_cdc_origin)
+            assert len(stage_errors) == 1, f"Expected 1 error record but found {len(stage_errors)}"
+            assert stage_errors[0].error_code == 'MONGODB_ATLAS_57'
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping %s database...', database)
+        mongodb.engine.drop_database(database)
+
+
 @pytest.mark.parametrize('read_changes_from', [
     'CHANGE_STREAM',
     'OPLOG'
