@@ -350,13 +350,13 @@ def test_mongodb_atlas_cdc_operation_types(sdc_builder, sdc_executor, mongodb, r
     'CHANGE_STREAM',
     'OPLOG'
 ])
-@pytest.mark.parametrize('full_record_not_found_behaviour', ['DISCARD_RECORD', 'UPDATED_FIELDS_RECORD', 'SEND_TO_ERROR'])
+@pytest.mark.parametrize('full_record_not_found_behavior', ['DISCARD_RECORD', 'UPDATED_FIELDS_RECORD', 'SEND_TO_ERROR'])
 def test_mongodb_atlas_cdc_full_record_update_with_a_closely_followed_delete(
         sdc_builder,
         sdc_executor,
         mongodb,
         read_changes_from,
-        full_record_not_found_behaviour
+        full_record_not_found_behavior
 ):
     """
     Update & delete the same record into MongoDB Atlas and read the changes with MongoDB Atlas CDC origin.
@@ -386,7 +386,7 @@ def test_mongodb_atlas_cdc_full_record_update_with_a_closely_followed_delete(
                                             include_namespaces=[f'{database}.{collection}'],
                                             operation_types=['UPDATE'],
                                             get_full_record_for_updates=True,
-                                            full_record_not_found_behaviour=full_record_not_found_behaviour)
+                                            full_record_not_found_behavior=full_record_not_found_behavior)
 
     # Configure MongoDB Atlas CDC to connect to old MongoDB version
     if not mongodb.atlas:
@@ -399,7 +399,7 @@ def test_mongodb_atlas_cdc_full_record_update_with_a_closely_followed_delete(
 
     pipeline = (pipeline_builder.build(title=f'Test MongoDB Atlas CDC - Full record update'
                                              f'[read_changes_from={read_changes_from}]'
-                                             f'[full_record_not_found_behaviour={full_record_not_found_behaviour}]')
+                                             f'[full_record_not_found_behaviour={full_record_not_found_behavior}]')
                 .configure_for_environment(mongodb))
 
     try:
@@ -426,12 +426,12 @@ def test_mongodb_atlas_cdc_full_record_update_with_a_closely_followed_delete(
         if pipeline_status != 'RUNNING':
             pytest.fail(f"Pipeline status is not RUNNING. The current status is {pipeline_status}")
 
-        if full_record_not_found_behaviour == 'DISCARD_RECORD':
+        if full_record_not_found_behavior == 'DISCARD_RECORD':
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
             stage_errors = sdc_executor.get_stage_errors(pipeline, mongodb_atlas_cdc_origin)
             assert len(wiretap.output_records) == 1, f"Expected 1 output record but found {len(wiretap.output_records)}"
             assert len(stage_errors) == 0, f"Expected no error records but found {len(stage_errors)}"
-        elif full_record_not_found_behaviour == 'UPDATED_FIELDS_RECORD':
+        elif full_record_not_found_behavior == 'UPDATED_FIELDS_RECORD':
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
             records = wiretap.output_records
             stage_errors = sdc_executor.get_stage_errors(pipeline, mongodb_atlas_cdc_origin)
@@ -442,12 +442,14 @@ def test_mongodb_atlas_cdc_full_record_update_with_a_closely_followed_delete(
             assert records[0].get_field_data('/')['_id'] == str(data_ids[0]['_id'])
             assert 'f1' not in records[0].get_field_data('/')
             assert records[0].get_field_data('/')['f2'] == 'Updated'
-        elif full_record_not_found_behaviour == 'ERROR_RECORD':
+        elif full_record_not_found_behavior == 'SEND_TO_ERROR':
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
             assert len(wiretap.output_records) == 1, f"Expected 1 output record but found {len(wiretap.output_records)}"
             stage_errors = sdc_executor.get_stage_errors(pipeline, mongodb_atlas_cdc_origin)
             assert len(stage_errors) == 1, f"Expected 1 error record but found {len(stage_errors)}"
             assert stage_errors[0].error_code == 'MONGODB_ATLAS_57'
+        else:
+            pytest.fail('Not supported full_record_not_found_behavior.')
     finally:
         sdc_executor.stop_pipeline(pipeline)
         logger.info('Dropping %s database...', database)
