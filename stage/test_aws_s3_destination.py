@@ -707,7 +707,17 @@ def test_s3_region_other(sdc_builder, sdc_executor, aws):
 
     s3_dest_pipeline = builder.build().configure_for_environment(aws)
 
-    s3_destination.set_attributes(use_specific_region=True, region='OTHER', endpoint=f's3.{aws.region}.amazonaws.com')
+    if Version(sdc_executor.version) < Version("6.1.0"):
+        s3_destination.set_attributes(
+            use_specific_region=True,
+            region='OTHER',
+            endpoint=f's3.{aws.region}.amazonaws.com'
+        )
+    else:
+        s3_destination.set_attributes(
+            s3_region_definition="SPECIFY_REGIONAL_ENDPOINT",
+            s3_regional_endpoint=f's3.{aws.region}.amazonaws.com'
+        )
 
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
@@ -765,10 +775,20 @@ def test_s3_vpc_endpoint_and_region(sdc_builder, sdc_executor, aws):
 
     s3_dest_pipeline = builder.build().configure_for_environment(aws)
 
-    s3_destination.set_attributes(use_specific_region=True, region='OTHER', use_custom_endpoint=True)
-
-    # Specific configs for this test
-    s3_destination.set_attributes(endpoint=aws.vpc_endpoint, signing_region=aws.signing_region)
+    if Version(sdc_executor.version) < Version("6.1.0"):
+        s3_destination.set_attributes(
+            use_specific_region=True,
+            region='OTHER',
+            use_custom_endpoint=True,
+            endpoint=aws.vpc_endpoint,
+            signing_region=aws.signing_region
+        )
+    else:
+        s3_destination.set_attributes(
+            s3_region_definition="SPECIFY_NON_REGIONAL_ENDPOINT",
+            s3_non_regional_endpoint=aws.vpc_endpoint,
+            s3_signing_region=aws.signing_region
+        )
 
     sdc_executor.add_pipeline(s3_dest_pipeline)
 

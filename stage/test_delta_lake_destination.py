@@ -159,9 +159,14 @@ def test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, use_inst
         if Version(sdc_builder.version) < Version("5.7.0"):
             databricks_deltalake.set_attributes(specify_aws_region=specify_region,
                                                 aws_region=aws.region.upper().replace('-', '_'))
-        else:
+        elif Version(sdc_executor.version) < Version("6.1.0"):
             databricks_deltalake.set_attributes(use_specific_region=specify_region,
                                                 region=aws.region.upper().replace('-', '_'))
+        else:
+            databricks_deltalake.set_attributes(
+                s3_region_definition="SPECIFY_REGION",
+                s3_region=aws.region.upper().replace('-', '_')
+            )
 
     # In case of Instance Profile we set it to True and set keys to blank
     if use_instance_profile:
