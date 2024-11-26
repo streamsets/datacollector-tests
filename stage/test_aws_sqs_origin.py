@@ -16,7 +16,7 @@ import json
 import logging
 
 import pytest
-from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.markers import aws, sdc_min_version, emr_external_id
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -371,6 +371,199 @@ def test_sqs_origin_delivery_guarantee(sdc_builder, sdc_executor, aws, delivery_
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         client.delete_queue(QueueUrl=queue_url)
+
+
+@aws('sqs')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_region', [
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_sqs_origin_region_configuration(sdc_builder, sdc_executor, aws, specify_region):
+    """Test for SQS consumer origin stage using different region configurations.
+    We do so by publishing data to a test queue using SQS client and
+    having a pipeline which reads that data using SQS consumer origin stage. Data is then asserted for what is
+    published at SQS client and what we read from wiretap. The pipeline looks like:
+
+    Amazon SQS Consumer pipeline:
+        amazon_sqs_consumer >> wiretap
+    """
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string()}'
+
+    builder = sdc_builder.get_pipeline_builder()
+    amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
+    amazon_sqs_consumer.set_attributes(data_format='TEXT',
+                                       queue_name_prefixes=[queue_name])
+
+    if specify_region == 'use_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sqs="SPECIFY_REGION",
+            region_for_sqs=aws.formatted_region
+        )
+    elif specify_region == 'use_custom_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sqs="SPECIFY_REGION",
+            region_for_sqs="OTHER",
+            custom_region_for_sqs=aws.region
+        )
+    elif specify_region == 'use_regional_endpoint':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sqs="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sqs=f"sqs.{aws.region}.amazonaws.com"
+        )
+    elif specify_region == 'use_regional_vpc_endpoint':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sqs="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sqs=aws.sqs_vpc_endpoint
+        )
+    elif specify_region == 'use_custom_endpoint_and_signing_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sqs="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sqs=aws.sqs_vpc_endpoint,
+            signing_region_for_sqs=aws.formatted_region
+        )
+    elif specify_region == 'use_custom_endpoint_and_custom_signing_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sqs="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sqs=aws.sqs_vpc_endpoint,
+            signing_region_for_sqs="OTHER",
+            custom_signing_region_for_sqs=aws.region
+        )
+
+    wiretap = builder.add_wiretap()
+    amazon_sqs_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = (builder
+                                .build(title=f'Amazon SQS Consumer '
+                                             f'[specify_region={specify_region}]')
+                                .configure_for_environment(aws))
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.sqs
+    logger.info('Creating %s SQS queue on AWS ...', queue_name)
+    queue_url = client.create_queue(QueueName=queue_name)['QueueUrl']
+    try:
+        # note there is a limit of 10 messages only for sending in a batch
+        number_of_messages = 10
+        message_entries = [{'Id': str(i), 'MessageBody': 'Message {0}'.format(i)} for i in range(number_of_messages)]
+        sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+        if len(sent_response.get('Successful', [])) != number_of_messages:
+            raise Exception('Test messages not successfully sent to the queue %s', queue_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', number_of_messages)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        result_data = [str(record.field['text']) for record in wiretap.output_records]
+        assert len(result_data) == number_of_messages
+        assert sorted(result_data) == sorted([message['MessageBody'] for message in message_entries])
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        if queue_url:
+            logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
+            client.delete_queue(QueueUrl=queue_url)
+
+
+@aws('sqs')
+@emr_external_id
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_sts_region', [
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_sqs_origin_with_assume_role(sdc_builder, sdc_executor, aws, specify_sts_region):
+    """Test for SQS consumer origin stage using assume-role with different region configurations.
+    We do so by publishing data to a test queue using SQS client and
+    having a pipeline which reads that data using SQS consumer origin stage. Data is then asserted for what is
+    published at SQS client and what we read from wiretap. The pipeline looks like:
+
+    Amazon SQS Consumer pipeline:
+        amazon_sqs_consumer >> wiretap
+    """
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string()}'
+
+    builder = sdc_builder.get_pipeline_builder()
+    amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
+    amazon_sqs_consumer.set_attributes(data_format='TEXT',
+                                       queue_name_prefixes=[queue_name])
+
+    if specify_sts_region == 'use_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts="OTHER",
+            custom_region_for_sts=aws.region
+        )
+    elif specify_sts_region == 'use_regional_endpoint':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=f"sts.{aws.region}.amazonaws.com"
+        )
+    elif specify_sts_region == 'use_regional_vpc_endpoint':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=aws.sts_vpc_endpoint
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_signing_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_custom_signing_region':
+        amazon_sqs_consumer.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts="OTHER",
+            custom_signing_region_for_sts=aws.region
+        )
+
+    wiretap = builder.add_wiretap()
+    amazon_sqs_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = (builder
+                                .build(title=f'Amazon SQS Consumer with Assume Role '
+                                             f'[sts_specify_region={specify_sts_region}]')
+                                .configure_for_environment(aws))
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.sqs
+    logger.info('Creating %s SQS queue on AWS ...', queue_name)
+    queue_url = client.create_queue(QueueName=queue_name)['QueueUrl']
+    try:
+        # note there is a limit of 10 messages only for sending in a batch
+        number_of_messages = 10
+        message_entries = [{'Id': str(i), 'MessageBody': 'Message {0}'.format(i)} for i in range(number_of_messages)]
+        sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+        if len(sent_response.get('Successful', [])) != number_of_messages:
+            raise Exception('Test messages not successfully sent to the queue %s', queue_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', number_of_messages)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        result_data = [str(record.field['text']) for record in wiretap.output_records]
+        assert len(result_data) == number_of_messages
+        assert sorted(result_data) == sorted([message['MessageBody'] for message in message_entries])
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        if queue_url:
+            logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
+            client.delete_queue(QueueUrl=queue_url)
 
 
 def _ensure_pipeline_is_stopped(sdc_executor, pipeline):
