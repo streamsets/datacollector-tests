@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_OPTIONS = 'alwaysRefresh=true'
 
 
+def pytest_generate_tests(metafunc):
+    if "credential_store" in metafunc.fixturenames:
+        metafunc.parametrize('credential_store', [{'auth_method': 'WITH_CREDENTIALS'},
+                                                  {'auth_method': 'WITH_IAM_ROLES'}],
+                             indirect=True, scope="module")
+
+
 @database('mariadb')
 @pytest.mark.parametrize('same_secret', [True, False])
 def test_aws_credential_store(sdc_builder, sdc_executor, database, credential_store, same_secret):
