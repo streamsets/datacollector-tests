@@ -251,10 +251,53 @@ def test_file_exists(sdc_builder, sdc_executor, ftp, stage_attributes):
         sdc_executor.execute_shell(f'rm -R {local_tmp_directory}')
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE'}])
-def test_file_name_expression(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@sftp
+@sdc_min_version('6.1.0')
+def test_file_name_expression(sdc_builder, sdc_executor, sftp):
+
+    # Our destination SFTP/FTP/FTPS file name
+    sftp_ftp_file_name = "${time:extractStringFromDate(time:now(), 'yyyy_MM_dd_HH_mm_ss')}"
+    # Local temporary directory where we will create a source file to be uploaded to SFTP/FTP/FTPS server
+    local_tmp_directory = os.path.join('~', tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    local_file_name = f'sdc-{get_random_string(string.ascii_letters, 5)}'
+    raw_data = 'Hello World!'
+    sftp.put_string(os.path.join(sftp.path, sftp_ftp_file_name), raw_data)
+
+    sdc_executor.execute_shell(f'mkdir {local_tmp_directory}/')
+    sdc_executor.execute_shell(f'echo {raw_data} >> {local_tmp_directory}/{local_file_name}')
+
+    # Build source file pipeline logic
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.data_format = 'WHOLE_FILE'
+    directory.file_name_pattern = 'sdc*'
+    directory.files_directory = local_tmp_directory
+
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget')
+    sftp_ftp_client.file_name_expression = sftp_ftp_file_name
+
+    directory >> sftp_ftp_client
+
+    sftp_ftp_client.protocol = 'SFTP'
+    sftp_ftp_client_pipeline = builder.build('SFTP Destination Pipeline - Protocol').configure_for_environment(sftp)
+
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    # Start SFTP/FTP/FTPS upload (destination) file pipeline and assert pipeline has processed expected number of files
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline)
+    sdc_executor.wait_for_pipeline_metric(sftp_ftp_client_pipeline, 'output_record_count', 1)
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+
+    transport, client = sftp.client
+    try:
+        # Read SFTP destination file and compare our source data to assert
+        assert sftp.get_string(os.path.join(sftp.path, sftp_ftp_file_name)).strip() == raw_data
+        client.remove(os.path.join(sftp.path, sftp_ftp_file_name))
+    finally:
+        # Delete the test SFTP destination file we created
+        client.close()
+        transport.close()
+        sdc_executor.execute_shell(f'rm -R {local_tmp_directory}')
 
 
 @stub
