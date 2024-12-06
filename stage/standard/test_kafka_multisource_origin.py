@@ -695,6 +695,50 @@ def test_data_format_mismatch(sdc_builder, sdc_executor, cluster):
     assert "KAFKA_37" in error_message, f'Expected error not found in {error_message}'
 
 
+@cluster('cdh', 'kafka')
+def test_poll_fail(sdc_builder, sdc_executor, cluster):
+    topic = get_random_string()
+    batch_wait_time = 20_000
+
+    # Build pipeline.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # auto_offset_reset "NONE" throws an exception to the consumer if no previous offset is found.
+    kafka_consumer = _get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, ['wrongTopic'])
+    kafka_consumer.set_attributes(
+        batch_wait_time_in_ms=batch_wait_time,
+        auto_offset_reset='NONE'
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    kafka_consumer >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    producer = cluster.kafka.producer()
+    try:
+
+        data = get_random_string()
+        producer.send(topic, data.encode())
+        producer.flush()
+        sdc_executor.start_pipeline(pipeline)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert False, 'Expected error not generated'
+
+    except RunError as e:
+        error_message=e.message
+        assert "KAFKA_29" in error_message, f'Expected error not found in {error_message}'
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+
 def _get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     cluster_version = cluster.version[3:]
