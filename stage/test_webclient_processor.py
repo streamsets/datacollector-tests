@@ -14,8 +14,11 @@
 # limitations under the License.
 
 import pytest
-from streamsets.testframework.markers import sdc_min_version, web_client
+import string
+import sqlalchemy
 from streamsets.sdk.exceptions import RunError
+from streamsets.testframework.markers import sdc_min_version, web_client, database
+from streamsets.testframework.utils import get_random_string, Version
 
 from stage import _wait_for_pipeline_statuses
 from stage.test_webclient_origin import retry_parameters, per_status_action_parameters, \
@@ -33,7 +36,6 @@ from stage.utils.webclient import (
 )
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
-from streamsets.testframework.utils import Version
 
 import logging
 from random import randint
@@ -948,3 +950,85 @@ def test_webclient_events(sdc_builder, sdc_executor, cleanup, server, test_name,
     assert "John Doe" == output.get("employee_name")
     assert 320800 == output.get("employee_salary")
     assert 41 == output.get("employee_age")
+
+
+@database('mysql')
+def test_to_verify_webclient_processes_offsets_correctly(sdc_builder, sdc_executor, cleanup, server, test_name, database):
+    """
+     Test to verify that the WebClient Processor processes the Initial Offset correctly i.e.
+     a. input records successfully pass through the pipeline and gets augmented with the output obtained by invoking
+        the specified URL using the WebClient Processor.
+     b. it doesn't throw the below exception:
+         StageException: OFFSET_023 - String offset for offset class WebClientOffset could not be deserialized neither
+         with the current nor the legacy mode
+     Related intervention : INT-3234
+    """
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    num_records = 8
+    input_data = [{'id': i, 'name': get_random_string()} for i in range(1, num_records + 1)]
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    sql_query = f'SELECT * FROM {table_name} ORDER BY id ASC'
+
+    # Create pipeline
+    origin = pipeline_builder.add_stage('JDBC Query Consumer')
+    origin.set_attributes(incremental_mode=False,
+                          sql_query=sql_query,
+                          max_batch_size_in_records=10)
+
+    output_response = ''
+
+    def serve():
+        return output_response, 200
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    endpoint_url = endpoint.recv_url()
+
+    webclient_processor = pipeline_builder.add_stage(WEB_CLIENT, type="processor")
+    webclient_processor.set_attributes(
+        library=LIBRARY,
+        request_endpoint=endpoint_url,
+        output_field="/output",
+        per_status_actions=PER_STATUS_ACTIONS
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+
+    origin >> webclient_processor >> wiretap.destination
+    origin >= finisher
+
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    try:
+        # Create and populate table
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name,
+                                 sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column('name', sqlalchemy.String(32)))
+        table.create(database.engine)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), input_data)
+
+        cleanup(handler.stop_work, work)
+        handler.start_work(work)
+        _wait_for_pipeline_statuses(sdc_executor, pipeline, ["FINISHED"])
+        sdc_records = [record.field
+                       for record in wiretap.output_records]
+        assert len(sdc_records) == len(input_data)
+        for record in sdc_records:
+            for input in input_data:
+                if record.get('id') == input.get('id'):
+                    assert record.get('name') == input.get('name')
+                    assert record.get('output') == output_response
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)

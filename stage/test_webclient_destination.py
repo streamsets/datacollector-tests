@@ -14,9 +14,12 @@
 # limitations under the License.
 
 import pytest
+import string
+import sqlalchemy
 from random import randint
-from streamsets.testframework.markers import sdc_min_version, web_client
 from streamsets.sdk.exceptions import RunError
+from streamsets.testframework.markers import sdc_min_version, web_client, database
+from streamsets.testframework.utils import Version, get_random_string
 
 from stage import _wait_for_pipeline_statuses
 from stage.test_webclient_origin import per_status_action_parameters, per_status_action_parameters_unknown_status
@@ -33,7 +36,6 @@ from stage.utils.webclient import (
 )
 from stage.utils.common import cleanup, test_name
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
-from streamsets.testframework.utils import Version
 
 import logging
 
@@ -539,3 +541,75 @@ def test_webclient_events(sdc_builder, sdc_executor, cleanup, server, test_name,
 
     history = sdc_executor.get_pipeline_history(pipeline)
     assert history.latest.metrics.counter('stage.WebClient_01.outputRecords.counter').count == 1
+
+
+@database('mysql')
+def test_to_verify_webclient_processes_offsets_correctly(sdc_builder, sdc_executor, cleanup, server, test_name, database):
+    """
+     Test to verify that the WebClient Destination processes the Initial Offset correctly i.e.
+     a. input records successfully pass through the pipeline.
+     b. it doesn't throw the below exception:
+         StageException: OFFSET_023 - String offset for offset class WebClientOffset could not be deserialized neither
+         with the current nor the legacy mode
+     Related intervention : INT-3234
+    """
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, None, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+
+    num_records = 8
+    input_data = [{'id': i, 'name': get_random_string()} for i in range(1, num_records + 1)]
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    sql_query = f'SELECT * FROM {table_name} ORDER BY id ASC'
+
+    # Create pipeline
+    origin = pipeline_builder.add_stage('JDBC Query Consumer')
+    origin.set_attributes(incremental_mode=False,
+                          sql_query=sql_query,
+                          max_batch_size_in_records=10)
+
+    def serve():
+        return '', 200
+
+    endpoint = Endpoint(serve, ["GET"])
+    server.start([endpoint])
+    cleanup(server.stop)
+    server.ready()
+    url = endpoint.recv_url()
+
+    webclient_destination = pipeline_builder.add_stage(WEB_CLIENT, type="destination")
+    webclient_destination.set_attributes(
+        library=LIBRARY,
+        request_endpoint=url,
+        per_status_actions=PER_STATUS_ACTIONS,
+    )
+
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+
+    origin >> webclient_destination
+    origin >= finisher
+
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    try:
+        # Create and populate table
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name,
+                                 sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column('name', sqlalchemy.String(32)))
+        table.create(database.engine)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), input_data)
+
+        handler.start_work(work)
+        handler.wait_for_status(work, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.WebClient_01.outputRecords.counter').count == num_records
+        assert history.latest.metrics.counter('stage.WebClient_01.errorRecords.counter').count == 0
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
