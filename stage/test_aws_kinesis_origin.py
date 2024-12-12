@@ -348,6 +348,21 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
     kinesis_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+
+    if Version(sdc_builder.version) < Version('6.1.0'):
+        kinesis_consumer.set_attributes(region='OTHER',
+                                        assume_role=False,
+                                        use_a_different_connection_for_dynamodb=True,
+                                        use_a_different_connection_for_cloudwatch=True)
+    else:
+        kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGIONAL_ENDPOINT',
+                                        regional_endpoint_for_kinesis=aws.aws_kinesis_vpce_endpoint,
+                                        assume_role=False,
+                                        region_definition_for_dynamodb='SPECIFY_REGION',
+                                        region_for_dynamodb=aws.formatted_region,
+                                        region_definition_for_cloudwatch='SPECIFY_REGION',
+                                        region_for_cloudwatch=aws.formatted_region)
+
     kinesis_consumer.set_attributes(region='OTHER', endpoint=endpoint)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
@@ -447,11 +462,6 @@ def test_kinesis_consumer_other_region_and_vpc_endpoint_only_for_kinesis_service
         kinesis_consumer >> wiretap
     """
 
-    if not aws.kinesis_vpc_endpoint:
-        pytest.skip("This test will only run with --aws-kinesis-vpc-endpoint")
-
-    vpc_endpoint = aws.kinesis_vpc_endpoint
-
     # build consumer pipeline
     application_name = get_random_string(string.ascii_letters, 10)
     stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
@@ -468,10 +478,20 @@ def test_kinesis_consumer_other_region_and_vpc_endpoint_only_for_kinesis_service
     kinesis_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
-    kinesis_consumer.set_attributes(region='OTHER',
-                                    assume_role=False,
-                                    use_a_different_connection_for_dynamodb=True,
-                                    use_a_different_connection_for_cloudwatch=True)
+
+    if Version(sdc_builder.version) < Version('6.1.0'):
+        kinesis_consumer.set_attributes(region='OTHER',
+                                        assume_role=False,
+                                        use_a_different_connection_for_dynamodb=True,
+                                        use_a_different_connection_for_cloudwatch=True)
+    else:
+        kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGIONAL_ENDPOINT',
+                                        regional_endpoint_for_kinesis=aws.aws_kinesis_vpce_endpoint,
+                                        assume_role=False,
+                                        region_definition_for_dynamodb='SPECIFY_REGION',
+                                        region_for_dynamodb=aws.formatted_region,
+                                        region_definition_for_cloudwatch='SPECIFY_REGION',
+                                        region_for_cloudwatch=aws.formatted_region)
 
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
@@ -520,12 +540,6 @@ def test_kinesis_consumer_using_specific_connection_for_dynamodb_and_cloudwatch(
             kinesis_consumer >> wiretap
     """
 
-    if not aws.kinesis_vpc_endpoint:
-        pytest.skip("This test will only run with --aws-kinesis-vpc-endpoint")
-
-    vpc_endpoint = aws.kinesis_vpc_endpoint
-    endpoint = SERVICE_ENDPOINT_FORMAT.format('kinesis', aws.region)
-
     # build consumer pipeline
     application_name = get_random_string(string.ascii_letters, 10)
     stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
@@ -542,13 +556,312 @@ def test_kinesis_consumer_using_specific_connection_for_dynamodb_and_cloudwatch(
     kinesis_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
-    kinesis_consumer.set_attributes(region='OTHER',
-                                    assume_role=False,
-                                    use_a_different_connection_for_dynamodb=True,
-                                    dynamodb_region='OTHER',
-                                    use_a_different_connection_for_cloudwatch=True,
-                                    cloudwatch_region='OTHER')
+    if Version(sdc_builder.version) < Version('6.1.0'):
+        kinesis_consumer.set_attributes(region='OTHER',
+                                        assume_role=False,
+                                        use_a_different_connection_for_dynamodb=True,
+                                        dynamodb_region='OTHER',
+                                        use_a_different_connection_for_cloudwatch=True,
+                                        cloudwatch_region='OTHER')
+    else:
+        kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGION',
+                                        region_for_kinesis=aws.formatted_region,
+                                        assume_role=False,
+                                        region_definition_for_dynamodb='SPECIFY_REGIONAL_ENDPOINT',
+                                        regional_endpoint_for_dynamodb=aws.aws_kinesis_vpce_dynamodb_endpoint,
+                                        region_definition_for_cloudwatch='SPECIFY_REGIONAL_ENDPOINT',
+                                        regional_endpoint_for_cloudwatch=aws.aws_kinesis_vpce_cloudwatch_endpoint)
     
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        output_records = [record.field['text'].value
+                          for record in wiretap.output_records]
+
+        assert set(output_records) == expected_messages
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+
+@aws('kinesis')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_region', [
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_kinesis_consumer_different_kinesis_region_definition_types(sdc_builder, sdc_executor, aws, specify_region):
+    """Test for Kinesis consumer origin stage using different definitions types
+
+    The pipeline looks like:
+
+        Kinesis Consumer pipeline:
+            kinesis_consumer >> wiretap
+    """
+
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name,
+                                    data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name,
+                                    assume_role=False)
+
+    wiretap = builder.add_wiretap()
+    kinesis_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    #DynamoDB - Cloudwatch region configuration
+    kinesis_consumer.set_attributes(region_definition_for_dynamodb='SPECIFY_REGION',
+                                    region_for_dynamodb=aws.formatted_region,
+                                    region_definition_for_cloudwatch='SPECIFY_REGION',
+                                    region_for_cloudwatch=aws.formatted_region)
+
+    #Kinesis - Region configuration
+    if specify_region == 'use_region':
+        kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGION',
+                                        region_for_kinesis=aws.formatted_region)
+    if specify_region == 'use_custom_region':
+        kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGION',
+                                        region_for_kinesis='OTHER',
+                                        custom_region_for_kinesis=aws.region)
+    elif specify_region == 'use_regional_endpoint':
+        kinesis_consumer.set_attributes(region_definition_for_kinesis="SPECIFY_REGIONAL_ENDPOINT",
+                                        regional_endpoint_for_kinesis=f'kinesis.{aws.region}.amazonaws.com')
+    elif specify_region == 'use_regional_vpc_endpoint':
+        kinesis_consumer.set_attributes(region_definition_for_kinesis="SPECIFY_REGIONAL_ENDPOINT",
+                                        regional_endpoint_for_kinesis=aws.aws_kinesis_vpce_endpoint)
+    elif specify_region == 'use_custom_endpoint_and_signing_region':
+        kinesis_consumer.set_attributes(region_definition_for_kinesis="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                        custom_endpoint_for_kinesis=aws.aws_kinesis_vpce_endpoint,
+                                        signing_region_for_kinesis=aws.formatted_region)
+    elif specify_region == 'use_custom_endpoint_and_custom_signing_region':
+        kinesis_consumer.set_attributes(region_definition_for_kinesis="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                        custom_endpoint_for_kinesis=aws.aws_kinesis_vpce_endpoint,
+                                        signing_region_for_kinesis="OTHER",
+                                        custom_signing_region_for_kinesis=aws.region)
+
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        output_records = [record.field['text'].value
+                          for record in wiretap.output_records]
+
+        assert set(output_records) == expected_messages
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+
+@aws('kinesis')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_region', [
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_kinesis_consumer_different_dynamodb_region_definition_types(sdc_builder, sdc_executor, aws, specify_region):
+    """Test for Kinesis consumer origin stage using different definitions types
+
+    The pipeline looks like:
+
+        Kinesis Consumer pipeline:
+            kinesis_consumer >> wiretap
+    """
+
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name,
+                                    data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name,
+                                    assume_role=False)
+
+
+    wiretap = builder.add_wiretap()
+    kinesis_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    #Kinesis - Cloudwatch region configuration
+    kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGION',
+                                    region_for_kinesis=aws.formatted_region,
+                                    region_definition_for_cloudwatch='SPECIFY_REGION',
+                                    region_for_cloudwatch=aws.formatted_region)
+
+    #DynamoDB - Region configuration
+    if specify_region == 'use_region':
+        kinesis_consumer.set_attributes(region_definition_for_dynamodb='SPECIFY_REGION',
+                                        region_for_dynamodb=aws.formatted_region)
+    if specify_region == 'use_custom_region':
+        kinesis_consumer.set_attributes(region_definition_for_dynamodb='SPECIFY_REGION',
+                                        region_for_dynamodb='OTHER',
+                                        custom_region_for_dynamodb=aws.region)
+    elif specify_region == 'use_regional_endpoint':
+        kinesis_consumer.set_attributes(region_definition_for_dynamodb="SPECIFY_REGIONAL_ENDPOINT",
+                                        regional_endpoint_for_dynamodb=f'dynamodb.{aws.region}.amazonaws.com')
+    elif specify_region == 'use_regional_vpc_endpoint':
+        kinesis_consumer.set_attributes(region_definition_for_dynamodb="SPECIFY_REGIONAL_ENDPOINT",
+                                        regional_endpoint_for_dynamodb=aws.aws_kinesis_vpce_dynamodb_endpoint)
+    elif specify_region == 'use_custom_endpoint_and_signing_region':
+        kinesis_consumer.set_attributes(region_definition_for_dynamodb="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                        custom_endpoint_for_dynamodb=aws.aws_kinesis_vpce_dynamodb_endpoint,
+                                        signing_region_for_dynamodb=aws.formatted_region)
+    elif specify_region == 'use_custom_endpoint_and_custom_signing_region':
+        kinesis_consumer.set_attributes(region_definition_for_dynamodb="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                        custom_endpoint_for_dynamodb=aws.aws_kinesis_vpce_dynamodb_endpoint,
+                                        signing_region_for_dynamodb="OTHER",
+                                        custom_signing_region_for_dynamodb=aws.region)
+
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        time.sleep(1)
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        output_records = [record.field['text'].value
+                          for record in wiretap.output_records]
+
+        assert set(output_records) == expected_messages
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+
+@aws('kinesis')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_region', [
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_kinesis_consumer_different_cloudwatch_region_definition_types(sdc_builder, sdc_executor, aws, specify_region):
+    """Test for Kinesis consumer origin stage using different definition types
+
+    The pipeline looks like:
+
+        Kinesis Consumer pipeline:
+            kinesis_consumer >> wiretap
+    """
+
+    if not aws.aws_kinesis_vpce_dynamodb_endpoint or not aws.aws_kinesis_vpce_cloudwatch_endpoint:
+        pytest.skip("This test will only run with --aws-kinesis-vpc-endpoint")
+
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name,
+                                    data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name,
+                                    assume_role=False)
+
+
+    wiretap = builder.add_wiretap()
+    kinesis_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    #Kinesis - DynamoDB region configuration
+    kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGION',
+                                    region_for_kinesis=aws.formatted_region,
+                                    region_definition_for_dynamodb='SPECIFY_REGION',
+                                    region_for_dynamodb=aws.formatted_region)
+
+    #DynamoDB - Region configuration
+    if specify_region == 'use_region':
+        kinesis_consumer.set_attributes(region_definition_for_cloudwatch='SPECIFY_REGION',
+                                        region_for_cloudwatch=aws.formatted_region)
+    if specify_region == 'use_custom_region':
+        kinesis_consumer.set_attributes(region_definition_for_cloudwatch='SPECIFY_REGION',
+                                        region_for_cloudwatch='OTHER',
+                                        custom_region_for_cloudwatch=aws.region)
+    elif specify_region == 'use_regional_endpoint':
+        kinesis_consumer.set_attributes(region_definition_for_cloudwatch="SPECIFY_REGIONAL_ENDPOINT",
+                                        regional_endpoint_for_cloudwatch=f'monitoring.{aws.region}.amazonaws.com')
+    elif specify_region == 'use_regional_vpc_endpoint':
+        kinesis_consumer.set_attributes(region_definition_for_cloudwatch="SPECIFY_REGIONAL_ENDPOINT",
+                                        regional_endpoint_for_cloudwatch=aws.aws_kinesis_vpce_cloudwatch_endpoint)
+    elif specify_region == 'use_custom_endpoint_and_signing_region':
+        kinesis_consumer.set_attributes(region_definition_for_cloudwatch="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                        custom_endpoint_for_cloudwatch=aws.aws_kinesis_vpce_cloudwatch_endpoint,
+                                        signing_region_for_cloudwatch="US_WEST_2")
+    elif specify_region == 'use_custom_endpoint_and_custom_signing_region':
+        kinesis_consumer.set_attributes(region_definition_for_cloudwatch="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                        custom_endpoint_for_cloudwatch=aws.aws_kinesis_vpce_cloudwatch_endpoint,
+                                        signing_region_for_cloudwatch="OTHER",
+                                        custom_signing_region_for_cloudwatch=aws.region)
+
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
     client = aws.kinesis
