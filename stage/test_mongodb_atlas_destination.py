@@ -696,11 +696,11 @@ def test_mongodb_atlas_destination_upsert_simple_list(sdc_builder, sdc_executor,
 @pytest.mark.parametrize('element_exist', [True, False])
 def test_mongodb_atlas_destination_update_nested_list(sdc_builder, sdc_executor, mongodb, nested, element_exist):
     """
-    Ensure that an update a nested document with nested list structure is correctly executed. 
+    Ensure that an update a nested document with nested list structure is correctly executed.
     The expected performance:
-        - If the nested list exist and have all the nested unique keys, it will replace the value 
+        - If the nested list exist and have all the nested unique keys, it will replace the value
         of the specific record for the new one.
-        - If the nested list exist but only had document unique key, it will replace the document 
+        - If the nested list exist but only had document unique key, it will replace the document
         for the record.
         - If the nested list or the document didn't exist, it will do nothing.
 
@@ -716,7 +716,7 @@ def test_mongodb_atlas_destination_update_nested_list(sdc_builder, sdc_executor,
     pipeline_title = 'Update - Nested List Structure - '
     operation = '3'
     upsert = False
-    
+
     if nested:
         pipeline_title = pipeline_title + 'Nested UK - '
         record = {"id": 0, "f1": [{"g1": 1, "g2": {"h1": 2, "h2": "Updated"}}]}
@@ -888,6 +888,182 @@ def test_mongodb_atlas_destination_upsert_nested_list(sdc_builder, sdc_executor,
         assert len(mongodb_documents) == len(expected_records)
         mongodb_documents_without_id = [_delete_id(doc) for doc in mongodb_documents]
         assert sorted(mongodb_documents_without_id, key=lambda x: x[sort_id]) == expected_records
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_destination.database)
+        mongodb.engine.drop_database(database_name)
+
+
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('element_exist', [True, False])
+def test_mongodb_atlas_destination_upsert_nested_multi_list(sdc_builder, sdc_executor, mongodb, element_exist):
+    """
+    Ensure that an upsert a nested document with nested list structure is correctly executed.
+    Here one of the unique keys is residing at n level nested array.
+    The expected performance:
+        - If the nested list exist and have all the nested unique keys, it will replace the value
+        of the specific record for the new one.
+        - If the nested list exist but only had document unique key, it will replace the document
+        for the record.
+        - If the nested list or the document didn't exist, it will insert the record.
+
+    The pipeline looks like:
+        dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    database_name = get_random_string(ascii_letters, 5)
+    collection_name = get_random_string(ascii_letters, 10)
+
+    pipeline_title = 'Upsert - N level Nested UK -  '
+    operation = '4'
+    upsert = True
+    record = {"sort_id": 0,"id": 0,"f1": [{"g1": [{"h1": [{"i1": 2,"i2": "Updated"}]}]}]}
+    sort_id = "sort_id"
+    unique_keys = [{'collectionPath': 'id', 'recordPath': ''},
+                   {'collectionPath': 'f1.$[].g1.$[].h1.$[el].i1', 'recordPath': ''}]
+
+    if element_exist:
+        pipeline_title = pipeline_title + 'Element exist'
+        origin_record = {"sort_id": 0,"id": 0,"f1": [{ "g1": [{"h1": [{"i1": 1,"i2": "NoUpdate"}]}]}, {"g1": [{"h1": [{"i1": 2,"i2": "ToBeUpdated"}]}]}]}
+        expected_records = [{"sort_id": 0,"id": 0,"f1": [{"g1": [{"h1": [{"i1":1,"i2": "NoUpdate"}]}]}, {"g1": [{"h1": [{"i1": 2,"i2": "Updated"}]}]}]}]
+    else:
+        pipeline_title = pipeline_title + 'Element no exist'
+        origin_record = {"sort_id": 0, "id": 0, "f1": [{"g1": [{"h1": [{"i1": 1,"i2": "NoUpdate"}]}]}]}
+        expected_records = [{"sort_id": 0, "id": 0, "f1": [{"g1": [{"h1": [{"i1": 1,"i2": "NoUpdate"}]}]}, {"g1": [{"h1": [{"i1": 2,"i2": "Updated"}]}]}]}]
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json_util.dumps(record),
+                                       stop_after_first_batch=True
+                                       )
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
+                                                          'headerAttributeExpression': operation}]
+
+    mongodb_atlas_destination = pipeline_builder.add_stage(name=MONGODB_ATLAS_DESTINATION)
+    mongodb_atlas_destination.set_attributes(database=database_name,
+                                             collection=collection_name,
+                                             unique_keys=unique_keys,
+                                             upsert=upsert)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_destination.tls_mode = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
+
+    dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+
+    pipeline = pipeline_builder.build(title=pipeline_title).configure_for_environment(mongodb)
+
+    try:
+        mongodb_database = mongodb.engine[database_name]
+        mongodb_collection = mongodb_database[collection_name]
+        inserted_doc = mongodb_collection.insert_one(origin_record)
+        assert inserted_doc is not None
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        logger.info('Verifying docs updated with PyMongo...')
+        mongodb_documents = [doc for doc in mongodb.engine[mongodb_atlas_destination.database][
+            mongodb_atlas_destination.collection].find()]
+        assert len(mongodb_documents) == len(expected_records)
+        mongodb_documents_without_id = [_delete_id(doc) for doc in mongodb_documents]
+        assert sorted(mongodb_documents_without_id, key=lambda x: x[sort_id]) == expected_records
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_destination.database)
+        mongodb.engine.drop_database(database_name)
+
+
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('element_exist', [True, False])
+def test_mongodb_atlas_destination_update_nested_multi_list(sdc_builder, sdc_executor, mongodb, element_exist):
+    """
+    Ensure that an update a nested document with nested list structure is correctly executed.
+    Here one of the unique keys is residing at n level nested array.
+    The expected performance:
+        - If the nested list exist and have all the nested unique keys, it will replace the value
+        of the specific record for the new one.
+        - If the nested list exist but only had document unique key, it will replace the document
+        for the record.
+        - If the nested list or the document didn't exist, it will do nothing.
+
+    The pipeline looks like:
+        dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    database_name = get_random_string(ascii_letters, 5)
+    collection_name = get_random_string(ascii_letters, 10)
+
+    pipeline_title = 'Update - Nested Multi List Structure - '
+    operation = '3'
+    upsert = False
+
+
+    pipeline_title = pipeline_title + 'Nested UK - '
+    record = {"id": 0, "f1": [{"g1": [{"h1": 2, "h2": {"i1": "Updated"}}]}]}
+    unique_keys = [{'collectionPath': 'id', 'recordPath': ''},
+                     {'collectionPath': 'f1.$[].g1.$[el].h1', 'recordPath': ''}]
+    if element_exist:
+        pipeline_title = pipeline_title + 'Element exist'
+        origin_record = {"id": 0, "f1": [{"g1": [{"h1": 1, "h2": {"i1": "NoUpdate"}}]},
+                                             {"g1": [{"h1": 2, "h2": {"i1": "TobeUpdated"}}]}]}
+        expected_records = [{"id": 0, "f1": [{"g1": [{"h1": 1, "h2": {"i1": "NoUpdate"}}]},
+                                                 {"g1": [{"h1": 2, "h2": {"i1": "Updated"}}]}]}]
+    else:
+        pipeline_title = pipeline_title + 'Element no exist'
+        origin_record = {"id": 0, "f1": [{"g1": 0, "g2": [{"h1": 1,  "h2": {"i1": "NoUpdate"}}]}]}
+        expected_records = [{"id": 0, "f1": [{"g1": 0, "g2": [{"h1": 1,  "h2": {"i1": "NoUpdate"}}]}]}]
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json_util.dumps(record),
+                                       stop_after_first_batch=True
+                                       )
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
+                                                          'headerAttributeExpression': operation}]
+
+    mongodb_atlas_destination = pipeline_builder.add_stage(name=MONGODB_ATLAS_DESTINATION)
+    mongodb_atlas_destination.set_attributes(database=database_name,
+                                             collection=collection_name,
+                                             unique_keys=unique_keys,
+                                             upsert=upsert)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_destination.tls_mode = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
+
+    dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+
+    pipeline = pipeline_builder.build(title=pipeline_title).configure_for_environment(mongodb)
+
+    try:
+        # Create document in MongoDB Atlas using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then document is created in that collection.
+        mongodb_database = mongodb.engine[database_name]
+        mongodb_collection = mongodb_database[collection_name]
+        inserted_doc = mongodb_collection.insert_one(origin_record)
+        assert inserted_doc is not None
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        logger.info('Verifying docs updated with PyMongo...')
+        mongodb_documents = [doc for doc in mongodb.engine[mongodb_atlas_destination.database][
+            mongodb_atlas_destination.collection].find()]
+        assert len(mongodb_documents) == len(expected_records)
+        mongodb_documents_without_id = [_delete_id(doc) for doc in mongodb_documents]
+        assert sorted(mongodb_documents_without_id, key=lambda x: x["id"]) == expected_records
 
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_destination.database)
@@ -1195,6 +1371,107 @@ def test_mongodb_atlas_destination_update_list_inside_map(sdc_builder, sdc_execu
         assert len(mongodb_documents) == len(expected_records)
         mongodb_documents_without_id = [_delete_id(doc) for doc in mongodb_documents]
         assert sorted(mongodb_documents_without_id, key=lambda x: x["id"]) == expected_records
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_destination.database)
+        mongodb.engine.drop_database(database_name)
+
+
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('element_exist', [True, False])
+def test_mongodb_atlas_destination_upsert_dup_key(sdc_builder, sdc_executor, mongodb, element_exist):
+    """
+    Ensure that an upsert a nested list, which contains objects (with same key duplicated inside it) inside an object structure is correctly executed.
+    Here one of the unique keys is an object (residing at n level nested array) itself with some properties, also the property keys are duplicated.
+         i.e., e.g:- here h1, h2 are duplicated as below. Also, if the unique key is h1, a match for the document is done by matching all it's
+         inner properties.
+                {
+                    "h1": {
+                        "h2": {
+                            "h1": 2,
+                            "h2": "h2-value"
+                        }
+                    }
+                }
+     The expected performance:
+        - If the object exist inside the list that is inside an object, and have all the nested unique keys, it will
+        replace the value of the specific element for the new one.
+        - If the object exist inside the list that is inside an object, but only had document unique key, it will
+        replace the document for the record.
+        - If the element didn't exist inside the nested list or the document didn't exist, it will insert the record.
+
+    The pipeline looks like:
+        dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    database_name = get_random_string(ascii_letters, 5)
+    collection_name = get_random_string(ascii_letters, 10)
+
+    pipeline_title = 'Upsert - Object With Same Key Duplicated Inside It - Nested UK - '
+    operation = '4'
+    upsert = True
+
+    record = {"id": 0, "f1": {"g1": [{ "h1": {"h2": {"h1": 2,"h2": "h2-value"}}}]}}
+    unique_keys = [{'collectionPath': 'id', 'recordPath': ''},
+                    {'collectionPath': 'f1.g1.$[el].h1', 'recordPath': ''}]
+    if element_exist:
+        pipeline_title = pipeline_title + 'Element exist'
+        origin_record = {"id": 0, "f1": {"g1": [{ "h1": {"h2": {"h1": 2,"h2": "h2-value"}}}, { "h1": {"h2": {"h1": 3,"h2": "NoUpdate"}}}]}}
+        expected_records = [{"id": 0, "f1": {"g1": [{ "h1": {"h2": {"h1" : 2,"h2" : "h2-value"}}}, { "h1": {"h2": {"h1": 3,"h2": "NoUpdate"}}}]}}]
+    else:
+        pipeline_title = pipeline_title + 'Element no exist'
+        origin_record = {"id": 0, "f1": {"g1": [{"h1": {"h2": {"h1": 3,"h2" : "NoUpdate"}}}]}}
+        expected_records = [{"id": 0, "f1": {"g1": [{"h1": {"h2": {"h1": 2,"h2": "h2-value"}}}, {"h1": {"h2": {"h1": 3,"h2": "NoUpdate"}}}]}}]
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json_util.dumps(record),
+                                       stop_after_first_batch=True
+                                       )
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
+                                                          'headerAttributeExpression': operation}]
+
+    mongodb_atlas_destination = pipeline_builder.add_stage(name=MONGODB_ATLAS_DESTINATION)
+    mongodb_atlas_destination.set_attributes(database=database_name,
+                                             collection=collection_name,
+                                             unique_keys=unique_keys,
+                                             upsert=upsert)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_destination.tls_mode = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
+
+    dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+
+    pipeline = pipeline_builder.build(title=pipeline_title).configure_for_environment(mongodb)
+
+    try:
+        # Create document in MongoDB Atlas using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then document is created in that collection.
+        mongodb_database = mongodb.engine[database_name]
+        mongodb_collection = mongodb_database[collection_name]
+        inserted_doc = mongodb_collection.insert_one(origin_record)
+        assert inserted_doc is not None
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        logger.info('Verifying docs updated with PyMongo...')
+        mongodb_documents = [doc for doc in mongodb.engine[mongodb_atlas_destination.database][
+            mongodb_atlas_destination.collection].find()]
+        assert len(mongodb_documents) == len(expected_records)
+        mongodb_documents_without_id = [_delete_id(doc) for doc in mongodb_documents]
+        if not element_exist:
+            mongodb_documents_without_id[0]['f1']['g1'].sort(key=lambda x: x['h1']['h2']['h1'])
+            assert mongodb_documents_without_id == expected_records
+        else:
+            assert sorted(mongodb_documents_without_id, key=lambda x: x["id"]) == expected_records
 
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_destination.database)
