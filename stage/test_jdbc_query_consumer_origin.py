@@ -19,6 +19,7 @@ import time
 
 import pytest
 import sqlalchemy
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.environments.databases import (MySqlDatabase, OracleDatabase,
@@ -550,3 +551,57 @@ def test_jdbc_incremental_offset_to_string(sdc_builder, sdc_executor, database, 
     finally:
         logger.info('Dropping tables in %s database...', database.type)
         connection.execute(f'DROP TABLE IF EXISTS {table_name}')
+
+
+@database('postgresql', 'sqlserver', 'mariadb', 'mysql')
+def test_jdbc_query_special_character_offset_column(sdc_builder, sdc_executor, database):
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        if database.type in ['PostgreSQL', 'SQLServer']:
+            connection.execute(f"""
+                        CREATE TABLE {table_name} (
+                            "id-1" int
+                        )
+                    """)
+        else:
+            connection.execute(f"""
+                        CREATE TABLE {table_name} (
+                            `id-1` int
+                        )
+                    """)
+
+        # Add some data to the table
+        for i in range(1, 11):
+            connection.execute(f"INSERT INTO {table_name} VALUES({i})")
+
+        sql_query = f'SELECT * FROM {table_name} WHERE id-1 > ${{OFFSET}} ORDER BY id-1'
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('JDBC Query Consumer')
+        origin.set_attributes(incremental_mode=True,
+                              sql_query=sql_query,
+                              offset_column='id-1',
+                              max_batch_size_in_records=5)
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        with pytest.raises(ValidationError) as e:
+            sdc_executor.validate_pipeline(pipeline)
+
+        assert e is not None
+        assert e.value.issues is not None
+        assert e.value.issues['issueCount'] == 1
+        exception_message = e.value.issues['stageIssues'][origin.instance_name][0]['message']
+        assert f"JDBC_INIT_64 -" in exception_message
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f"DROP TABLE IF EXISTS {table_name}")
