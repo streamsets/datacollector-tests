@@ -6763,3 +6763,93 @@ def _dump_dictionary_to_log(connection):
     connection.execute('begin dbms_logmnr_d.build(options => dbms_logmnr_d.store_in_redo_logs); end;')
     connection.execute('alter system archive log current')
     logger.info('Dumping dictionary to redolog finished...')
+
+
+@database('oracle')
+#@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('initial_change_config', [
+	{"initial_change": "DATE", "start_date": "01-01-1900 12:00:00"},
+	{"initial_change": "SCN", "start_scn": "0"},
+])
+def test_oracle_cdc_client_old_initial_change(sdc_builder, sdc_executor, database, initial_change_config):
+    row_count = 3
+    pipeline = table = None
+
+    try:
+        src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+        connection = database.engine.connect()
+        table = _setup_table(database=database,table_name=src_table_name)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = _get_oracle_cdc_client_origin(connection=connection,
+                                                          database=database,
+                                                          sdc_builder=sdc_builder,
+                                                          pipeline_builder=pipeline_builder,
+                                                          buffer_locally=False,
+                                                          buffer_location='IN_MEMORY',
+                                                          src_table_name=src_table_name,
+                                                          logminer_session_window='${14400 * HOURS}',
+							  **initial_change_config)
+        wiretap = pipeline_builder.add_wiretap()
+
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        inserts = _insert(connection=connection, table=table, count=row_count)
+        rows = inserts.rows
+        cdc_op_types = inserts.cdc_op_types
+        sdc_op_types = inserts.sdc_op_types
+        change_count = inserts.change_count
+        updates = _update(connection=connection, table=table, count=row_count)
+        rows += updates.rows
+        cdc_op_types += updates.cdc_op_types
+        sdc_op_types += updates.sdc_op_types
+        change_count += updates.change_count
+        deletes = _delete(connection=connection, table=table, count=row_count)
+        rows += updates.rows
+        cdc_op_types += deletes.cdc_op_types
+        sdc_op_types += deletes.sdc_op_types
+        change_count += deletes.change_count
+
+
+        # Why do we need to wait?
+        # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
+        # If the DB is ahead, the batch end time the origin may not be after all the changes were written to the DB.
+        # So we wait until the time here is past the time at which all data was written out to the DB (current time)
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', change_count, timeout_sec=30)
+
+        wiretap_output_records_retries = 0
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_control_length = change_count
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        sorted_records = sorted(wiretap_output_records, key=lambda record: (record.header.values["oracle.cdc.scn"], int(record.header.values["oracle.cdc.sequence.internal"])))
+        assert len(sorted_records) == wiretap_output_records_control_length
+
+        row_index = op_index = 0
+        for record in sorted_records:
+            assert row_index == int(record.field['ID'].value)
+            assert rows[op_index]['NAME'] == record.field['NAME'].value
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
+            row_index = (row_index + 1) % row_count
+            op_index += 1
+        assert op_index == change_count
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if table is not None:
+            table.drop(database.engine)
+            logger.info('Table: %s dropped.', src_table_name)
