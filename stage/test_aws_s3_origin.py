@@ -2363,4 +2363,111 @@ def test_s3_origin_assume_role_with_external_id(sdc_builder, sdc_executor, aws):
         assert output_records == test_data, 'Output records were not in the expected format.'
 
     finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+
+@aws('s3')
+@emr_external_id
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_sts_region', [
+    None,
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_s3_origin_assume_role_with_different_region_configurations(sdc_builder, sdc_executor, aws, specify_sts_region):
+    """
+    Test to try to read the information on s3_origin using assume role with different region configurations.
+
+    S3_origin_pipeline:
+         s3.origin >> wiretap
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
+
+    records_per_file = 3
+    data_file = 'data-file.txt'
+    test_data = [f'Message {i}' for i in range(records_per_file)]
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
+                          prefix_pattern=f'**/{pattern}*',
+                          common_prefix=f'{s3_key}',
+                          set_session_tags=False)
+
+    if specify_sts_region == 'use_region':
+        origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_region':
+        origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts="OTHER",
+            custom_region_for_sts=aws.region
+        )
+    elif specify_sts_region == 'use_regional_endpoint':
+        origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=f"sts.{aws.region}.amazonaws.com"
+        )
+    elif specify_sts_region == 'use_regional_vpc_endpoint':
+        origin.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=aws.sts_vpc_endpoint
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_signing_region':
+        origin.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_custom_signing_region':
+        origin.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts="OTHER",
+            custom_signing_region_for_sts=aws.region
+        )
+    else:
+        origin.set_attributes(
+            region_definition_for_sts="NOT_SPECIFIED",
+        )
+
+    records_wiretap = builder.add_wiretap()
+
+    origin >> records_wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file}',
+                          Body='\n'.join(test_data).encode('ascii'))
+
+        # Run until finished-file
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_file, timeout_sec=120)
+
+        output_records = [record.field['text'] for record in records_wiretap.output_records]
+
+        # Assert that 3 records have been read
+        assert records_per_file == len(output_records), 'The number of outputs records is wrong.'
+        assert output_records == test_data, 'Output records were not in the expected format.'
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)

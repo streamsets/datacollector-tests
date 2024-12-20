@@ -715,8 +715,8 @@ def test_s3_region_other(sdc_builder, sdc_executor, aws):
         )
     else:
         s3_destination.set_attributes(
-            s3_region_definition="SPECIFY_REGIONAL_ENDPOINT",
-            s3_regional_endpoint=f's3.{aws.region}.amazonaws.com'
+            region_definition_for_s3="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_s3=f's3.{aws.region}.amazonaws.com'
         )
 
     sdc_executor.add_pipeline(s3_dest_pipeline)
@@ -785,9 +785,9 @@ def test_s3_vpc_endpoint_and_region(sdc_builder, sdc_executor, aws):
         )
     else:
         s3_destination.set_attributes(
-            s3_region_definition="SPECIFY_NON_REGIONAL_ENDPOINT",
-            s3_non_regional_endpoint=aws.vpc_endpoint,
-            s3_signing_region=aws.signing_region
+            region_definition_for_s3="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_s3=aws.vpc_endpoint,
+            signing_region_for_s3=aws.signing_region
         )
 
     sdc_executor.add_pipeline(s3_dest_pipeline)
@@ -809,6 +809,7 @@ def test_s3_vpc_endpoint_and_region(sdc_builder, sdc_executor, aws):
         assert json.loads(s3_contents) == json.loads(raw_str)
     finally:
         aws.delete_s3_data(s3_bucket, s3_key)
+
 
 @aws('s3')
 @sdc_min_version('3.16.0')
@@ -933,6 +934,121 @@ def test_s3_destination_assume_role_with_external_id(sdc_builder, sdc_executor, 
     s3_destination >= wiretap.destination
 
     pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+
+        # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert json.loads(s3_contents) == json.loads(raw_str), 'Wrong json value or empty value.'
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+
+@aws('s3')
+@emr_external_id
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_sts_region', [
+    None,
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_s3_destination_assume_role_with_different_region_configurations(
+        sdc_builder,
+        sdc_executor,
+        aws,
+        specify_sts_region
+):
+    """
+    Test using a prefix, suffix, and partition for S3, and check if the result contains the prefix, suffix,
+    and partition.
+
+    S3_destination_pipeline:
+        dev_raw_data_source >> s3.destination >> wiretap
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    external_id = aws.emr_external_id
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}' \
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket=s3_bucket,
+                                  data_format='JSON',
+                                  partition_prefix=s3_key,
+                                  set_session_tags=False)
+
+    if specify_sts_region == 'use_region':
+        s3_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_region':
+        s3_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts="OTHER",
+            custom_region_for_sts=aws.region
+        )
+    elif specify_sts_region == 'use_regional_endpoint':
+        s3_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=f"sts.{aws.region}.amazonaws.com"
+        )
+    elif specify_sts_region == 'use_regional_vpc_endpoint':
+        s3_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=aws.sts_vpc_endpoint
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_signing_region':
+        s3_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_custom_signing_region':
+        s3_destination.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts="OTHER",
+            custom_signing_region_for_sts=aws.region
+        )
+    else:
+        s3_destination.set_attributes(
+            region_definition_for_sts="NOT_SPECIFIED",
+        )
+
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> s3_destination
+    s3_destination >= wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
     client = aws.s3

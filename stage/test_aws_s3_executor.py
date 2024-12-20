@@ -16,6 +16,7 @@ import json
 import logging
 import string
 
+import pytest
 from streamsets.sdk.models import Configuration
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, sdc_min_version, emr_external_id
@@ -438,6 +439,7 @@ def _ensure_pipeline_is_stopped(sdc_executor, pipeline):
     if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
         sdc_executor.stop_pipeline(pipeline)
 
+
 @aws('s3')
 @emr_external_id
 @sdc_min_version('5.9.0')
@@ -470,6 +472,118 @@ def test_s3_executor_assume_role_with_external_id(sdc_builder, sdc_executor, aws
     record_deduplicator >> to_error
 
     s3_exec_pipeline = builder.build(title='Amazon S3 executor pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_exec_pipeline)
+
+    client = aws.s3
+
+    try:
+        sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_finished()
+
+        # Assert record count to S3 the size of the objects put.
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # Read data from S3 to assert it is what got ingested into the pipeline.
+        s3_contents = [
+            client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
+            for s3_content in list_s3_objs['Contents']]
+
+        assert s3_contents[0] == 'StreamSets Inc.'
+
+        # Check if the 'file-created' event was generated (only for recent sdc versions).
+        assert len(wiretap.output_records) == 1, 'The number of output records processed is incorrect'
+        assert wiretap.output_records[0].header.values['sdc.event.type'] == 'file-created', "File-created event " \
+                                                                                            "wasn't created"
+
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
+        aws.delete_s3_data(s3_bucket, s3_key)
+
+
+@aws('s3')
+@emr_external_id
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_sts_region', [
+    None,
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_s3_executor_assume_role_with_different_region_configurations(
+        sdc_builder,
+        sdc_executor,
+        aws,
+        specify_sts_region
+):
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    raw_str = f'{{"bucket": "{s3_bucket}", "company": "StreamSets Inc."}}'
+
+    # Build the pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
+
+    s3_executor = builder.add_stage('Amazon S3', type='executor')
+    s3_executor.set_attributes(bucket='${record:value("/bucket")}',
+                               task='CREATE_NEW_OBJECT',
+                               object=s3_key,
+                               content='${record:value("/company")}',
+                               set_session_tags=False)
+
+    if specify_sts_region == 'use_region':
+        s3_executor.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_region':
+        s3_executor.set_attributes(
+            region_definition_for_sts="SPECIFY_REGION",
+            region_for_sts="OTHER",
+            custom_region_for_sts=aws.region
+        )
+    elif specify_sts_region == 'use_regional_endpoint':
+        s3_executor.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=f"sts.{aws.region}.amazonaws.com"
+        )
+    elif specify_sts_region == 'use_regional_vpc_endpoint':
+        s3_executor.set_attributes(
+            region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_sts=aws.sts_vpc_endpoint
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_signing_region':
+        s3_executor.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts=aws.formatted_region
+        )
+    elif specify_sts_region == 'use_custom_endpoint_and_custom_signing_region':
+        s3_executor.set_attributes(
+            region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+            signing_region_for_sts="OTHER",
+            custom_signing_region_for_sts=aws.region
+        )
+    else:
+        s3_executor.set_attributes(
+            region_definition_for_sts="NOT_SPECIFIED",
+        )
+
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> record_deduplicator >> s3_executor >= wiretap.destination
+    record_deduplicator >> to_error
+
+    s3_exec_pipeline = builder.build().configure_for_environment(aws)
     sdc_executor.add_pipeline(s3_exec_pipeline)
 
     client = aws.s3
