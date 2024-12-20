@@ -17,8 +17,9 @@ import string
 import time
 from datetime import datetime
 
-from streamsets.testframework.markers import aws
-from streamsets.testframework.utils import get_random_string
+import pytest
+from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,116 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
     dev_raw_data_source >> firehose_destination
 
     firehose_dest_pipeline = builder.build().configure_for_environment(aws)
-    firehose_destination.set_attributes(region='OTHER', endpoint=endpoint)
+    if Version(sdc_builder.version) < Version('6.1.0'):
+        firehose_destination.set_attributes(region='OTHER', endpoint=endpoint)
+    else:
+        firehose_destination.set_attributes(region_definition_for_kinesis='SPECIFY_REGIONAL_ENDPOINT',
+                                            regional_endpoint_for_kinesis=endpoint)
+    sdc_executor.add_pipeline(firehose_dest_pipeline)
+
+    try:
+        # start pipeline and assert
+        sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_finished()
+
+        # wait till data is available in S3. We do so by querying for buffer wait time and sleep till then
+        resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
+        dests = resp['DeliveryStreamDescription']['Destinations'][0]
+        wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
+        logger.info(f'Waiting seconds configured to {wait_secs}')
+        time.sleep(wait_secs + 15)  # an extra minute to wait to make sure S3 gets the data
+
+        iteration = 0
+        while len(s3_put_keys) == 0 and iteration < 10:
+            logger.info(f'Waiting Iteration number: {iteration}')
+            s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
+            iteration = iteration + 1
+            time.sleep(iteration * 5)
+
+        assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, firehose_dest_pipeline)
+        # delete S3 objects related to this test
+        if len(s3_put_keys) > 0:
+            delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
+            s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('firehose', 's3')
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_region', [
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_builder, sdc_executor, aws, specify_region):
+    """Test for Firehose target stage with other as region and service endpoint.
+
+    Firehose Destination pipeline:
+        dev_raw_data_source >> firehose_destination
+    """
+    s3_client = aws.s3
+    firehose_client = aws.firehose
+
+    # setup test static
+    s3_bucket = aws.s3_bucket_name
+    stream_name = aws.firehose_stream_name
+    # json formatted string
+    random_raw_str = f'{{"text":"{get_random_string(string.ascii_letters, 10)}"}}'
+    record_count = 1  # random_raw_str record size
+    s3_put_keys = []
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=random_raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    firehose_destination = builder.add_stage('Kinesis Firehose')
+    firehose_destination.set_attributes(stream_name=stream_name, data_format='JSON')
+
+    dev_raw_data_source >> firehose_destination
+
+    firehose_dest_pipeline = builder.build().configure_for_environment(aws)
+
+    if specify_region == 'use_region':
+        firehose_destination.set_attributes(
+            region_definition_for_kinesis='SPECIFY_REGION',
+            region_for_kinesis=aws.formatted_region
+        )
+    if specify_region == 'use_custom_region':
+        firehose_destination.set_attributes(
+            region_definition_for_kinesis='SPECIFY_REGION',
+            region_for_kinesis='OTHER',
+            custom_region_for_kinesis=aws.region
+        )
+    elif specify_region == 'use_regional_endpoint':
+        firehose_destination.set_attributes(
+            region_definition_for_kinesis="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_kinesis=f'firehose.{aws.region}.amazonaws.com'
+        )
+    elif specify_region == 'use_regional_vpc_endpoint':
+        firehose_destination.set_attributes(
+            region_definition_for_kinesis="SPECIFY_REGIONAL_ENDPOINT",
+            regional_endpoint_for_kinesis=aws.firehose_vpc_endpoint
+        )
+    elif specify_region == 'use_nonregional_endpoint_and_signing_region':
+        firehose_destination.set_attributes(
+            region_definition_for_kinesis="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_kinesis=aws.firehose_vpc_endpoint,
+            signing_region_for_kinesis=aws.formatted_region
+        )
+    elif specify_region == 'use_nonregional_endpoint_and_custom_signing_region':
+        firehose_destination.set_attributes(
+            region_definition_for_kinesis="SPECIFY_NON_REGIONAL_ENDPOINT",
+            custom_endpoint_for_kinesis=aws.firehose_vpc_endpoint,
+            signing_region_for_kinesis="OTHER",
+            custom_signing_region_for_kinesis=aws.region
+        )
+
     sdc_executor.add_pipeline(firehose_dest_pipeline)
 
     try:
