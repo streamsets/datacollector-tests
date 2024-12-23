@@ -16,7 +16,7 @@ import logging
 import string
 import pytest
 
-from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.markers import aws, sdc_min_version, emr_external_id
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ def test_kinesis_write_to_error(sdc_builder, sdc_executor, aws):
 
 @aws('kinesis')
 @sdc_min_version('6.1.0')
+@emr_external_id
 @pytest.mark.parametrize('specify_region', [
     'use_region',
     'use_custom_region',
@@ -139,6 +140,103 @@ def test_kinesis_write_to_error_different_kinesis_region_definition_types(sdc_bu
                                  custom_endpoint_for_kinesis=aws.aws_kinesis_vpce_endpoint,
                                  signing_region_for_kinesis="OTHER",
                                  custom_signing_region_for_kinesis=aws.region)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create Kinesis stream.
+        logger.debug('Creating %s Kinesis stream on AWS...', stream_name)
+        aws.kinesis.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+        shard_id = aws.kinesis.describe_stream(StreamName=stream_name)['StreamDescription']['Shards'][0]['ShardId']
+
+        # Run pipeline and get error metrics.
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        msg_count = history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count
+        logger.debug('Number of records sent to error = %s.', msg_count)
+
+        # Read data from Kinesis stream and compare with the records sent to error. We check that Kinesis
+        # messages and error records match, comparing number of items and data (looking for ocurrences of
+        # stage name and input string).
+        response = aws.kinesis.get_shard_iterator(StreamName=stream_name,
+                                                  ShardId=shard_id,
+                                                  ShardIteratorType='TRIM_HORIZON')
+        response = aws.kinesis.get_records(ShardIterator=response['ShardIterator'])
+
+        assert len(response['Records']) == msg_count
+        assert all([error_target.instance_name.encode() in rec['Data'] for rec in response['Records']])
+        assert all([raw_str.encode() in rec['Data'] for rec in response['Records']])
+
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, pipeline)
+        logger.debug('Deleting Kinesis stream %s...', stream_name)
+        aws.kinesis.delete_stream(StreamName=stream_name)
+
+
+@aws('kinesis')
+@emr_external_id
+@sdc_min_version('6.1.0')
+@pytest.mark.parametrize('specify_region', [
+    'use_region',
+    'use_custom_region',
+    'use_regional_endpoint',
+    'use_regional_vpc_endpoint',
+    'use_custom_endpoint_and_signing_region',
+    'use_custom_endpoint_and_custom_signing_region'
+])
+def test_kinesis_write_to_error_with_assume_role_using_different_region_definitions(sdc_builder,
+                                                                                    sdc_executor,
+                                                                                    aws,
+                                                                                    specify_region):
+    """Test error record handling to a Kinesis stream. We are using assume role with different region definitions.
+
+    Pipeline: dev_raw_data_source >> error_target
+
+    """
+    stream_name = f'{aws.kinesis_stream_prefix}_{get_random_string(string.ascii_letters, 10)}'
+    raw_str = 'Hello World!'
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    err_stage = builder.add_error_stage('Write to Kinesis')
+    err_stage.set_attributes(stream_name=stream_name,
+                             region_definition_for_kinesis='SPECIFY_REGION',
+                             region_for_kinesis=aws.formatted_region)
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_str)
+
+    error_target = builder.add_stage('To Error')
+
+    dev_raw_data_source >> error_target
+    pipeline = builder.build().configure_for_environment(aws)
+
+    if specify_region == 'use_region':
+        err_stage.set_attributes(region_definition_for_sts='SPECIFY_REGION',
+                                 region_for_sts=aws.formatted_region)
+    if specify_region == 'use_custom_region':
+        err_stage.set_attributes(region_definition_for_sts='SPECIFY_REGION',
+                                 region_for_sts='OTHER',
+                                 custom_region_for_sts=aws.region)
+    elif specify_region == 'use_regional_endpoint':
+        err_stage.set_attributes(region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+                                 regional_endpoint_for_sts=f'sts.{aws.region}.amazonaws.com')
+    elif specify_region == 'use_regional_vpc_endpoint':
+        err_stage.set_attributes(region_definition_for_sts="SPECIFY_REGIONAL_ENDPOINT",
+                                 regional_endpoint_for_sts=aws.sts_vpc_endpoint)
+    elif specify_region == 'use_custom_endpoint_and_signing_region':
+        err_stage.set_attributes(region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                 custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+                                 signing_region_for_sts="US_WEST_2")
+    elif specify_region == 'use_custom_endpoint_and_custom_signing_region':
+        err_stage.set_attributes(region_definition_for_sts="SPECIFY_NON_REGIONAL_ENDPOINT",
+                                 custom_endpoint_for_sts=aws.sts_vpc_endpoint,
+                                 signing_region_for_sts="OTHER",
+                                 custom_signing_region_for_sts=aws.region)
 
     sdc_executor.add_pipeline(pipeline)
 
