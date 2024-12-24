@@ -340,30 +340,25 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
                                     initial_position='TRIM_HORIZON',
                                     stream_name=stream_name)
 
-    if Version(sdc_builder.version) >= Version("5.10.0"):
-        kinesis_consumer.set_attributes(use_a_different_connection_for_dynamodb=True,
-                                        use_a_different_connection_for_cloudwatch=True)
-
     wiretap = builder.add_wiretap()
     kinesis_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
 
     if Version(sdc_builder.version) < Version('6.1.0'):
-        kinesis_consumer.set_attributes(region='OTHER',
-                                        assume_role=False,
-                                        use_a_different_connection_for_dynamodb=True,
-                                        use_a_different_connection_for_cloudwatch=True)
+        kinesis_consumer.set_attributes(region='OTHER', assume_role=False, endpoint=endpoint)
+        if Version(sdc_builder.version) >= Version("5.10.0"):
+            kinesis_consumer.set_attributes(use_a_different_connection_for_dynamodb=True,
+                                            use_a_different_connection_for_cloudwatch=True)
     else:
         kinesis_consumer.set_attributes(region_definition_for_kinesis='SPECIFY_REGIONAL_ENDPOINT',
-                                        regional_endpoint_for_kinesis=aws.aws_kinesis_vpce_endpoint,
+                                        regional_endpoint_for_kinesis=endpoint,
                                         assume_role=False,
                                         region_definition_for_dynamodb='SPECIFY_REGION',
                                         region_for_dynamodb=aws.formatted_region,
                                         region_definition_for_cloudwatch='SPECIFY_REGION',
                                         region_for_cloudwatch=aws.formatted_region)
 
-    kinesis_consumer.set_attributes(region='OTHER', endpoint=endpoint)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
     client = aws.kinesis
