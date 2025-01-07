@@ -164,8 +164,8 @@ def test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, use_inst
                                                 region=aws.region.upper().replace('-', '_'))
         else:
             databricks_deltalake.set_attributes(
-                s3_region_definition="SPECIFY_REGION",
-                s3_region=aws.region.upper().replace('-', '_')
+                region_definition_for_s3="SPECIFY_REGION",
+                region_for_s3=aws.region.upper().replace('-', '_')
             )
 
     # In case of Instance Profile we set it to True and set keys to blank
