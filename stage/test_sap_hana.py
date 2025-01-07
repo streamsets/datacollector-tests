@@ -639,7 +639,7 @@ def test_multiline_query(sdc_builder, sdc_executor, database):
 @sdc_min_version('3.17.0')
 @sap_hana
 @pytest.mark.parametrize('offset_column, old_error_code, new_error_code, changed_version',
-                         [('T.P_ID', 'JDBC_32 -', 'JDBC_INIT_12 -', '5.8.0'),
+                         [('T.P_ID', 'JDBC_32 -', 'JDBC_INIT_64 -', '5.8.0'),
                           ('NONEXISTINGCOLUMN', 'JDBC_29 -', 'JDBC_INIT_47 -', '5.9.0')])
 def test_invalid_offset_column(
         sdc_builder,
