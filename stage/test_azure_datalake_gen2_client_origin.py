@@ -1057,3 +1057,65 @@ def test_data_format_whole_file_with_post_processing_delete(sdc_builder, sdc_exe
         fs.rmdir(directory_name_source, recursive=True)
         logger.info(f'Deleting the folder {directory_name_local_fs} and its contents...')
         sdc_executor.execute_shell(f'rm -R {directory_name_local_fs}')
+
+
+@sdc_min_version('6.1.0')
+def test_data_lake_origin_timestamp_sort_with_many_files(sdc_builder, sdc_executor, azure):
+    """ Test for ADLS origin stage with a large quantity of files and sorting by Timestamp.
+    Before SDC 6.1.0, in this case, a no-more-data event was sometimes sent while the engine was still sorting files
+    and a new batch was requested for spooling. We want to test that the fix for that edge case still works.
+    We do so by creating a large amount of files in Azure Data Lake Storage using the STF client,
+    then reading the files using the Azure Data Lake Storage Gen2 Origin Stage, sorting by Timestamp and with a very
+    small value for the Batch Wait Time config.
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    base_file_name = 'test-data-'
+    extension = '.txt'
+    num_files = 40
+    num_msgs = 10
+    total_records = num_msgs * num_files
+
+    dl_fs = azure.datalake.file_system
+
+    try:
+        # Put files in the azure storage file system
+        dl_fs.mkdir(directory_name)
+        for i in range(num_files):
+            file_name = f'{base_file_name}{i}{extension}'
+            messages = [f'message-{i}-{j}' for j in range(num_msgs)]
+            dl_fs.touch(f'{directory_name}/{file_name}')
+            dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
+
+        # Wait for filesystem consistency
+        time.sleep(15)
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        wiretap = builder.add_wiretap()
+        azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
+        azure_data_lake_origin.set_attributes(batch_wait_time_in_ms=400,
+                                              buffer_limit_in_kb=256,
+                                              common_path=f'/{directory_name}',
+                                              data_format='TEXT',
+                                              max_batch_size_in_records=50000,
+                                              object_pool_size=100000,
+                                              read_order='TIMESTAMP',
+                                              spooling_period_in_secs=5)
+
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.preconditions = ['${record:eventType() == \'no-more-data\'}']
+
+        azure_data_lake_origin >> wiretap.destination
+        azure_data_lake_origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # assert Data Lake files generated
+        output_records = [record.field['text'] for record in wiretap.output_records]
+        assert total_records == len(output_records)
+
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)

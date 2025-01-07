@@ -32,7 +32,7 @@ from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
-SOURCE_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_datalake_gen2_DataLakeGen2DSource'
+SOURCE_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_datalake_gen2_DataLakeGen2DSource'  # (Legacy)
 TARGET_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget'
 
 TMP = '/tmp/'
@@ -263,6 +263,7 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
     finally:
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         dl_fs.rmdir(directory_name, recursive=True)
+
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
