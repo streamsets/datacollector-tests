@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import calendar
 import json
 import logging
 import os
@@ -735,6 +736,95 @@ def test_hadoop_fs_origin_standalone_simple_ordering(sdc_builder, sdc_executor, 
 
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
+
+@cluster('cdh', 'hdp')
+@sdc_min_version('6.1.0')
+def test_hadoop_fs_origin_standalone_tricky_ordering(sdc_builder, sdc_executor, cluster):
+    """Regression test to confirm that the comparison of dates in HDFS files works fine after fixing of bug in
+    https://streamsets.atlassian.net/browse/COLLECTOR-6376.
+    Write some files into a Hadoop FS folder with a randomly-generated name and a specific set of modification times
+    and confirm that the Hadoop FS origin successfully reads the expected number of records and in the right order.
+    Specifically, this would look like:
+
+    Hadoop FS pipeline:
+        hadoop_fs_origin >> trash
+        hadoop_fs_origin >= finisher
+    """
+    hdfs_dir = f'/tmp/{get_random_string(string.ascii_letters, 10)}'
+
+    hdfs_dir_c_first = f'{hdfs_dir}/c_first'
+    hdfs_dir_a_second = f'{hdfs_dir}/a_second'
+    hdfs_dir_b_third = f'{hdfs_dir}/b_third'
+
+    a_second_file = os.path.join(hdfs_dir_a_second, 'a_second.csv')
+    b_third_file = os.path.join(hdfs_dir_b_third, 'b_third.csv')
+    c_first_file = os.path.join(hdfs_dir_c_first, 'c_first.csv')
+
+    dateformat = '%Y-%m-%dT%H:%M:%S.%fZ'
+    a_second_time = calendar.timegm(time.strptime('2024-08-23T02:54:00.000Z', dateformat))  # '20240823:025400'
+    b_third_time = calendar.timegm(time.strptime('2024-11-15T03:20:00.000Z', dateformat))  # '20241115:032000'
+    c_first_time = calendar.timegm(time.strptime('2024-07-15T06:41:00.000Z', dateformat))  # '20240715:064100'
+
+    number_of_files = 3
+    records_per_file = 10
+    lines_in_file = [f'Message {i}' for i in range(records_per_file)]
+    data = '\n'.join(lines_in_file)
+
+    # Build the Hadoop FS pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
+    hadoop_fs.set_attributes(data_format='TEXT',
+                             files_directory=hdfs_dir,
+                             file_name_pattern='*',
+                             read_order='TIMESTAMP',
+                             batch_wait_time_in_secs=1)
+
+    trash = builder.add_stage('Trash')
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    hadoop_fs >> trash
+    hadoop_fs >= finisher
+
+    hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
+    hadoop_fs_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(hadoop_fs_pipeline)
+
+    try:
+        cluster.hdfs.client.makedirs(hdfs_dir)
+        cluster.hdfs.client.makedirs(hdfs_dir_c_first)
+        cluster.hdfs.client.makedirs(hdfs_dir_a_second)
+        cluster.hdfs.client.makedirs(hdfs_dir_b_third)
+
+        cluster.hdfs.client.write(a_second_file, data=data)
+        cluster.hdfs.client.write(b_third_file, data=data)
+        cluster.hdfs.client.write(c_first_file, data=data)
+
+        cluster.hdfs.client.set_times(a_second_file, modification_time=a_second_time)
+        cluster.hdfs.client.set_times(b_third_file, modification_time=b_third_time)
+        cluster.hdfs.client.set_times(c_first_file, modification_time=c_first_time)
+
+        # HDFS does not process files created less than 5 seconds ago by default, so we must wait a bit
+        time.sleep(10)
+
+        # Run the pipeline until there is no more data
+        sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished(timeout_sec=180)
+
+        # Check history and assert all data has been read
+        history = sdc_executor.get_pipeline_history(hadoop_fs_pipeline)
+        input_records_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        assert input_records_count == number_of_files * records_per_file
+        assert output_records_count == number_of_files * records_per_file + 1
+
+    finally:
+        cluster.hdfs.client.delete(hdfs_dir, recursive=True)
 
 
 @cluster('cdh')
