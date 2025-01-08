@@ -707,7 +707,7 @@ def test_s3_region_other(sdc_builder, sdc_executor, aws):
 
     s3_dest_pipeline = builder.build().configure_for_environment(aws)
 
-    if Version(sdc_executor.version) < Version("6.1.0"):
+    if Version(sdc_builder.version) < Version("6.1.0"):
         s3_destination.set_attributes(
             use_specific_region=True,
             region='OTHER',
@@ -775,7 +775,7 @@ def test_s3_vpc_endpoint_and_region(sdc_builder, sdc_executor, aws):
 
     s3_dest_pipeline = builder.build().configure_for_environment(aws)
 
-    if Version(sdc_executor.version) < Version("6.1.0"):
+    if Version(sdc_builder.version) < Version("6.1.0"):
         s3_destination.set_attributes(
             use_specific_region=True,
             region='OTHER',
