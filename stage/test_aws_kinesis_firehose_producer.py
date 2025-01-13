@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 S3_SANDBOX_PREFIX = 'sandbox'
 
 SERVICE_ENDPOINT_FORMAT = '{}.{}.amazonaws.com'
+BUFFER_DATA_TIME_SEC = 8
 
 
 @aws('firehose', 's3')
@@ -80,7 +81,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * 5)
+            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
@@ -152,7 +153,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * 5)
+            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
@@ -257,7 +258,7 @@ def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_build
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * 5)
+            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
@@ -354,7 +355,7 @@ def test_firehose_destination_to_s3_using_assume_role_with_different_region_defi
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * 5)
+            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
