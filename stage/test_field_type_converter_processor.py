@@ -1088,3 +1088,163 @@ def test_field_type_converter_unix_timestamp(sdc_builder, sdc_executor):
     for field, value in final_fields_and_values.items():
         assert field_output[0].field[field].type == 'DATETIME'
         assert field_output[0].field[field] == value
+
+
+@sdc_min_version('6.2.0')
+def test_field_type_converter_field_attributes(sdc_builder, sdc_executor):
+    """Test field type converter processor. We will use two stages to test field by field type conversion and
+    data type conversion.
+
+    We are making sure that both conversions keep field attributes
+
+    The pipeline would look like:
+
+        dev_raw_data_source >> expression_evaluator>> field_type_converter_fields >> field_type_converter_types >> wiretap
+    """
+    utc_datetime_str = '1978-01-05 19:38:01'
+    utc_datetime = datetime.strptime(utc_datetime_str, '%Y-%m-%d %H:%M:%S')
+    # add an hour and multiply by 1000 to account for milliseconds
+    utc_datetime_in_int = int(utc_datetime.strftime('%s')) * 1000
+    raw_str_value = 'hello again!'
+    # note, date time here is in UTC. Each map is an SDC record to process.
+    raw_col = [{'amInteger': 123, 'amDouble': 12345.6789115, 'amString': 'hello', 'amBool': True, 'amDateTime': utc_datetime_str, 'amString2': raw_str_value, 'amZonedDateTime': None}]
+    raw_data = json.dumps(raw_col)
+    field_type_converter_configs = [
+        {
+            'fields': ['/amInteger'],
+            'targetType': 'BYTE',
+            'dataLocale': 'en,US'
+        }, {
+            'fields': ['/amDouble'],
+            'targetType': 'INTEGER',
+            'dataLocale': 'en,US'
+        }, {
+            'fields': ['/amString'],
+            'targetType': 'CHAR'
+        }, {
+            'fields': ['/amBool'],
+            'targetType': 'BOOLEAN'
+        }, {
+            'fields': ['/amDateTime'],
+            'targetType': 'DATETIME',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS'
+        }, {
+            'fields': ['/amString2'],
+            'targetType': 'BYTE_ARRAY'
+        }, {
+            'fields': ['/amZonedDateTime'],
+            'targetType': 'ZONED_DATETIME'
+        }
+    ]
+    whole_type_converter_configs = [
+        {
+            'sourceType': 'BYTE',
+            'targetType': 'DECIMAL',
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
+        }, {
+            'sourceType': 'INTEGER',
+            'targetType': 'SHORT',
+            'dataLocale': 'en,US'
+        }, {
+            'sourceType': 'CHAR',
+            'targetType': 'STRING',
+            'treatInputFieldAsDate': False
+        }, {
+            'sourceType': 'BOOLEAN',
+            'targetType': 'STRING',
+            'treatInputFieldAsDate': False,
+            'encoding': 'UTF-8'
+        }, {
+            'sourceType': 'DATETIME',
+            'targetType': 'LONG',
+            'treatInputFieldAsDate': True,
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
+            'encoding': 'UTF-8',
+            'dataLocale': 'en,US'
+        }, {
+            'sourceType': 'BYTE_ARRAY',
+            'targetType': 'STRING',
+            'treatInputFieldAsDate': False,
+            'encoding': 'UTF-8'
+        }, {
+            'sourceType': 'ZONED_DATETIME',
+            'targetType': 'STRING',
+            'encoding': 'UTF-8'
+        }
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(field_attribute_expressions=[
+        {
+            "fieldToSet": "/amInteger",
+            "attributeToSet": "amInteger",
+            "fieldAttributeExpression": "${\"amInteger\"}"
+        },{
+            "fieldToSet": "/amDouble",
+            "attributeToSet": "amDouble",
+            "fieldAttributeExpression": "${\"amDouble\"}"
+        },{
+            "fieldToSet": "/amString",
+            "attributeToSet": "amString",
+            "fieldAttributeExpression": "${\"amString\"}"
+        },{
+            "fieldToSet": "/amBool",
+            "attributeToSet": "amBool",
+            "fieldAttributeExpression": "${\"amBool\"}"
+        },{
+            "fieldToSet": "/amDateTime",
+            "attributeToSet": "amDateTime",
+            "fieldAttributeExpression": "${\"amDateTime\"}"
+        },{
+            "fieldToSet": "/amString2",
+            "attributeToSet": "amString2",
+            "fieldAttributeExpression": "${\"amString2\"}"
+        },{
+            "fieldToSet": "/amZonedDateTime",
+            "attributeToSet": "amZonedDateTime",
+            "fieldAttributeExpression": "${\"amZonedDateTime\"}"
+        },
+    ])
+
+    field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
+                                               field_type_converter_configs=field_type_converter_configs)
+    field_type_converter_types = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter_types.set_attributes(conversion_method='BY_TYPE',
+                                              whole_type_converter_configs=whole_type_converter_configs)
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> expression_evaluator >> field_type_converter_fields >> field_type_converter_types >> wiretap.destination
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # assert data type conversion
+    record = wiretap.output_records[0]
+
+    assert record.field['amInteger'].type == 'DECIMAL'
+    assert record.field['amDouble'].type == 'SHORT'
+    assert record.field['amString'].type == 'STRING'
+    assert record.field['amBool'].type == 'STRING'
+    assert record.field['amDateTime'].type == 'LONG'
+    assert record.field['amString2'].type == 'STRING'
+    assert record.field['amZonedDateTime'].type == 'STRING'
+    # assert values which can be compared
+    assert utc_datetime_in_int == int(record.field['amDateTime'].value)
+    assert raw_str_value == record.field['amString2'].value
+
+    # Integer has more attributes by default, so I've to check contains
+    assert "'amInteger': 'amInteger'" in str(record.get_field_attributes('amInteger'))
+    
+    assert str(record.get_field_attributes('amDouble')) == "{'amDouble': 'amDouble'}"
+    assert str(record.get_field_attributes('amString')) == "{'amString': 'amString'}"
+    assert str(record.get_field_attributes('amBool')) == "{'amBool': 'amBool'}"
+    assert str(record.get_field_attributes('amDateTime')) == "{'amDateTime': 'amDateTime'}"
+    assert str(record.get_field_attributes('amString2')) == "{'amString2': 'amString2'}"
