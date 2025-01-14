@@ -493,3 +493,75 @@ def test_field_mapper_aggregate_expressions_field_mapping(
     finally:
         if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
             sdc_executor.stop_pipeline(pipeline)
+
+
+@sdc_min_version('6.2.0')
+def test_field_mapper_field_attributes(sdc_builder, sdc_executor):
+    """
+    Tests the Field Mapper processor aggregate expressions that contains field attributes those are preserved
+
+    The pipeline used by the test is:
+        Dev Raw Data Source >> Expression Evaluator >> Field Mapper >> Wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    raw_data = f"""f1,f2,f3
+Column1Data,Column2Data,Column3Data"""
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='DELIMITED',
+        header_line='WITH_HEADER',
+        raw_data=raw_data,
+        stop_after_first_batch=True
+    )
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(field_attribute_expressions=[
+        {
+            "fieldToSet": "/f1",
+            "attributeToSet": "attr-1",
+            "fieldAttributeExpression": "${\"--ATTR-1--\"}"
+        },
+        {
+            "fieldToSet": "/f2",
+            "attributeToSet": "attr-2",
+            "fieldAttributeExpression": "${\"--ATTR-2--\"}"
+        },
+        {
+            "fieldToSet": "/f3",
+            "attributeToSet": "attr-3",
+            "fieldAttributeExpression": "${\"--ATTR-3--\"}"
+        }
+    ])
+
+    field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper.set_attributes(
+        operate_on='FIELD_VALUES',
+        conditional_expression='${f:attribute("attr-1") == "--ATTR-1--"}',
+        mapping_expression='${str:concat(f:value()," -----ATTR-1-ACTION-----")}',
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> expression_evaluator >> field_mapper >> wiretap.destination
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    output_records = wiretap.output_records
+    print(output_records)
+    assert len(output_records) == 1
+    assert len(wiretap.error_records) == 0
+
+    record = output_records[0]
+
+    assert record is not None
+    assert str(record.get_field_attributes('/f1')) == "{'attr-1': '--ATTR-1--'}"
+    assert str(record.get_field_attributes('/f2')) == "{'attr-2': '--ATTR-2--'}"
+    assert str(record.get_field_attributes('/f3')) == "{'attr-3': '--ATTR-3--'}"
+    assert record.get_field_data('/f1') == 'Column1Data -----ATTR-1-ACTION-----'
+    assert record.get_field_data('/f2') == 'Column2Data'
+    assert record.get_field_data('/f3') == 'Column3Data'
