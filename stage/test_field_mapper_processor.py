@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import json
 import logging
 import pytest
 from collections import ChainMap
@@ -505,13 +505,11 @@ def test_field_mapper_field_attributes(sdc_builder, sdc_executor):
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    raw_data = f"""f1,f2,f3
-Column1Data,Column2Data,Column3Data"""
+    raw_col = {'f1': 'Column1Data','f2': 'Column2Data','f3': 'Column3Data'}
+    raw_data = json.dumps(raw_col)
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(
-        data_format='DELIMITED',
-        header_line='WITH_HEADER',
         raw_data=raw_data,
         stop_after_first_batch=True
     )
