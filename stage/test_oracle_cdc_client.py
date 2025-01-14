@@ -14,6 +14,7 @@
 
 import logging
 import re
+import time
 
 import pytest
 import sqlalchemy
@@ -1432,3 +1433,118 @@ def test_lob_ops_with_lobs_disabled(
     status = sdc_executor.get_pipeline_status(pipeline).response.json()
     assert status.get("status") not in {"RUN_ERROR", "RUNNING_ERROR"} or "ORACLE_CDC_1137" not in status.get("message")
 
+
+@sdc_min_version("6.2.0")
+@pytest.mark.parametrize('ignore_mviews,number_inserts,execute_refresh,expected_nrecords', [
+    (True, 10, True, 10),  # changes in the table
+    (True, 10, False, 10),  # changes in the table
+    (False, 10, False, 20), # changes in the table and in MLOG$.
+    (False, 10, True, 50), # changes in the table and in MVIEW and MLOG$.
+])
+def test_materialized_views_are_ignored(
+        sdc_builder,
+        sdc_executor,
+        database,
+        oracle_stage_name,
+        cleanup,
+        database_version,
+        test_name,
+        ignore_mviews,
+        number_inserts,
+        execute_refresh,
+        expected_nrecords,
+):
+    """ In this tests we are evaulating whether the change logs related to materialized views are properly ignored
+    if the origin is configured to do so. The test consists on creating a table and a simple materialized view over it.
+    Then running the pipeline with different configurations. For different cases:
+    - Ignore materialized views executing a refresh. The refresh operation does update MVIEW table along with MLOG$. A total of
+      50 log rows are generated. If materialized view is ignored then only the changes for the original table should be seen.
+    - Ignore materialized views without executing a refresh. Only 20 changes in logs as not all materialized view related tables 
+      are updated. Again, if the origin is configured to ignore materialied views, only origin table changes should be seen.
+    - The other two cases are without ignoring materialized views and so all the logs should be propagated.
+    """
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
+    connection = database.engine.connect()
+    cleanup(connection.close)
+
+    table_name = get_random_string(string.ascii_letters, 10)
+    connection.execute(f"""
+    CREATE TABLE C##SDC.{table_name} (id NUMBER PRIMARY KEY, text VARCHAR(10) DEFAULT NULL)
+    """)
+    cleanup(lambda c: c.execute(f"DROP TABLE C##SDC.{table_name}"), connection)
+    connection.execute(f"""
+    CREATE MATERIALIZED VIEW LOG ON C##SDC.{table_name}
+    WITH ROWID, PRIMARY KEY INCLUDING NEW VALUES
+    """)
+    cleanup(lambda c: c.execute(f"DROP MATERIALIZED VIEW LOG ON C##SDC.{table_name}"), connection)
+    connection.execute(f"""
+    CREATE MATERIALIZED VIEW {table_name}_mview BUILD IMMEDIATE
+    REFRESH FAST ON DEMAND AS SELECT * FROM {table_name}
+    """)
+    cleanup(lambda c: c.execute(f"DROP MATERIALIZED VIEW C##SDC.{table_name}"), connection)
+
+    # Starting mining after creating tables so that DDLs are not captured
+    time.sleep(3)
+    utc_time = time.gmtime()
+
+    # Build and start the pipeline.
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        start_mode='INSTANT', 
+        initial_instant=time.strftime('%Y-%m-%d %H:%M:%S', utc_time),
+        ignore_materialized_views=ignore_mviews,
+        unsupported_column_data_types='FORWARD',  # MLOG table does contain a column of RAW type that is not supported
+        **DefaultConnectionParameters(database)
+        | DefaultTableParameters(f".*{table_name}.*")
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_cdc >> wiretap.destination # type: ignore
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    t=connection.begin()
+    connection.execute(f"""
+    BEGIN
+    FOR v_id IN 1..{number_inserts} LOOP
+        EXECUTE IMMEDIATE 'INSERT INTO C##SDC.{table_name} (id) VALUES ('|| v_id || ')';
+    END LOOP
+    COMMIT;
+    END;
+    """)
+    t.commit()
+
+    # Force materialized view to be updated
+    if execute_refresh:
+        t=connection.begin()
+        connection.execute(f"""
+        BEGIN
+            DBMS_MVIEW.REFRESH('{table_name}_mview', 'COMPLETE');
+        END;
+        """)
+        t.commit()
+
+    handler.start_work(work)
+
+    handler.wait_for_metric(work, "input_record_count", expected_nrecords, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    time.sleep(1) # Just in case there is some extra record
+
+    sdc_executor.stop_pipeline(pipeline)
+
+    error_records = wiretap.error_records
+    output_records = wiretap.output_records
+    assert len(output_records) == expected_nrecords, 'Divergencies on the expected and actual output records'
+    expected_tables = [table_name.upper()]
+    if not ignore_mviews:
+        if execute_refresh:
+            expected_tables.append(table_name.upper() + '_MVIEW')
+        expected_tables.append('MLOG$_' + table_name.upper())
+
+    assert all([r.header.values['oracle.cdc.table'] in expected_tables 
+                for r in output_records]), f'All output records have to be from those tables {expected_tables}'
+    assert len(error_records) == 0, 'No error records expected'
