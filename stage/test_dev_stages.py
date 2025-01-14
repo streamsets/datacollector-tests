@@ -170,15 +170,15 @@ def test_field_attributes(sdc_executor, sdc_builder):
     """Test Dev Data Generator with and without generation of field attributes
 
     The pipeline looks like:
-    dev_raw_data_source >> wiretap
+    dev_data_generator >> wiretap
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     expected_fattrs_dict = {'fattr1': 'fvalue1', 'fattr2': 'fvalue2'}
     expected_fattrs_list = [{'key': key, 'value': value} for key, value in expected_fattrs_dict.items()]
 
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Data Generator')
-    dev_raw_data_source.set_attributes(records_to_be_generated=1,
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(records_to_be_generated=1,
                                        root_field_type='MAP',
                                        fields_to_generate=[
                                            {'field': 'f1', 'type': 'LONG'},
@@ -187,7 +187,7 @@ def test_field_attributes(sdc_executor, sdc_builder):
                                            {'field': 'f4', 'type': 'STRING', 'fieldAttributes': expected_fattrs_list}])
     wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> wiretap.destination
+    dev_data_generator >> wiretap.destination
 
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
