@@ -56,13 +56,19 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data,
                                                                                   stop_after_first_batch=True)
-    kudu = builder.add_stage('Kudu Lookup',
-                             type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=f'impala::default.{kudu_table_name}',
-                                                              key_columns_mapping=key_columns_mapping,
-                                                              column_to_output_field_mapping=column_to_output_field_mapping,
-                                                              case_sensitive=True,
-                                                              ignore_missing_value=True)
+
+    kudu = builder.add_stage('Kudu Lookup',type='processor')
+    kudu.set_attributes(kudu_table_name=f'impala::default.{kudu_table_name}',
+                        key_columns_mapping=key_columns_mapping,
+                        column_to_output_field_mapping=column_to_output_field_mapping,
+                        case_sensitive=True,
+                        ignore_missing_value=True)
+
+    if Version(sdc_builder.version) < Version("6.1.0"):
+        kudu.set_attributes(kudu_masters=kudu_master_address)
+    else:
+        kudu.set_attributes(kudu_primary_nodes=kudu_master_address)
+
 
     wiretap = builder.add_wiretap()
 
@@ -135,13 +141,19 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data)
-    kudu = builder.add_stage('Kudu Lookup',
-                             type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=f'impala::default.{kudu_table_name}',
-                                                              key_columns_mapping=key_columns_mapping,
-                                                              column_to_output_field_mapping=column_to_output_field_mapping,
-                                                              case_sensitive=False,
-                                                              ignore_missing_value=True)
+
+    kudu = builder.add_stage('Kudu Lookup',type='processor')
+    kudu.set_attributes(kudu_table_name=f'impala::default.{kudu_table_name}',
+                        key_columns_mapping=key_columns_mapping,
+                        column_to_output_field_mapping=column_to_output_field_mapping,
+                        case_sensitive=False,
+                        ignore_missing_value=True)
+
+    if Version(sdc_builder.version) < Version("6.1.0"):
+        kudu.set_attributes(kudu_masters=kudu_master_address)
+    else:
+        kudu.set_attributes(kudu_primary_nodes=kudu_master_address)
+
     trash = builder.add_stage('Trash')
     dev_raw_data_source >> kudu >> trash
 
@@ -223,13 +235,19 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data,
                                                                                   stop_after_first_batch=True)
-    kudu = builder.add_stage('Kudu Lookup',
-                             type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=f'impala::default.{kudu_table_name}',
-                                                              key_columns_mapping=key_columns_mapping,
-                                                              column_to_output_field_mapping=column_to_output_field_mapping,
-                                                              case_sensitive=True,
-                                                              ignore_missing_value=True)
+
+    kudu = builder.add_stage('Kudu Lookup',type='processor')
+    kudu.set_attributes(kudu_table_name=f'impala::default.{kudu_table_name}',
+                        key_columns_mapping=key_columns_mapping,
+                        column_to_output_field_mapping=column_to_output_field_mapping,
+                        case_sensitive=True,
+                        ignore_missing_value=True)
+
+    if Version(sdc_builder.version) < Version("6.1.0"):
+        kudu.set_attributes(kudu_masters=kudu_master_address)
+    else:
+        kudu.set_attributes(kudu_primary_nodes=kudu_master_address)
+
     wiretap = builder.add_wiretap()
 
     dev_raw_data_source >> kudu >> wiretap.destination
@@ -315,13 +333,18 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data,
                                                                                   stop_after_first_batch=True)
-    kudu = builder.add_stage('Kudu Lookup',
-                             type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=f'impala::default.{kudu_table_name}',
-                                                              key_columns_mapping=key_columns_mapping,
-                                                              column_to_output_field_mapping=column_to_output_field_mapping,
-                                                              case_sensitive=True,
-                                                              ignore_missing_value=False)
+
+    kudu = builder.add_stage('Kudu Lookup',type='processor')
+    kudu.set_attributes(kudu_table_name=f'impala::default.{kudu_table_name}',
+                        key_columns_mapping=key_columns_mapping,
+                        column_to_output_field_mapping=column_to_output_field_mapping,
+                        case_sensitive=True,
+                        ignore_missing_value=False)
+
+    if Version(sdc_builder.version) < Version("6.1.0"):
+        kudu.set_attributes(kudu_masters=kudu_master_address)
+    else:
+        kudu.set_attributes(kudu_primary_nodes=kudu_master_address)
 
     wiretap = builder.add_wiretap()
 
@@ -387,13 +410,19 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data,
                                                                                   stop_after_first_batch=True)
-    kudu = builder.add_stage('Kudu Lookup',
-                             type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=f'impala::default.{kudu_table_name}',
-                                                              key_columns_mapping=key_columns_mapping,
-                                                              column_to_output_field_mapping=column_to_output_field_mapping,
-                                                              case_sensitive=True,
-                                                              ignore_missing_value=False)
+
+    kudu = builder.add_stage('Kudu Lookup',type='processor')
+    kudu.set_attributes(kudu_table_name=f'impala::default.{kudu_table_name}',
+                        key_columns_mapping=key_columns_mapping,
+                        column_to_output_field_mapping=column_to_output_field_mapping,
+                        case_sensitive=True,
+                        ignore_missing_value=False)
+
+    if Version(sdc_builder.version) < Version("6.1.0"):
+        kudu.set_attributes(kudu_masters=kudu_master_address)
+    else:
+        kudu.set_attributes(kudu_primary_nodes=kudu_master_address)
+
     wiretap = builder.add_wiretap()
 
     dev_raw_data_source >> kudu >> wiretap.destination
@@ -467,13 +496,18 @@ def test_kudu_lookup_decimal_type(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data,
                                                                                   stop_after_first_batch=True)
-    kudu = builder.add_stage('Kudu Lookup',
-                             type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=f'impala::default.{kudu_table_name}',
-                                                              key_columns_mapping=key_columns_mapping,
-                                                              column_to_output_field_mapping=column_to_output_field_mapping,
-                                                              case_sensitive=True,
-                                                              ignore_missing_value=True)
+
+    kudu = builder.add_stage('Kudu Lookup',type='processor')
+    kudu.set_attributes(kudu_table_name=f'impala::default.{kudu_table_name}',
+                        key_columns_mapping=key_columns_mapping,
+                        column_to_output_field_mapping=column_to_output_field_mapping,
+                        case_sensitive=True,
+                        ignore_missing_value=True)
+
+    if Version(sdc_builder.version) < Version("6.1.0"):
+        kudu.set_attributes(kudu_masters=kudu_master_address)
+    else:
+        kudu.set_attributes(kudu_primary_nodes=kudu_master_address)
 
     wiretap = builder.add_wiretap()
 
