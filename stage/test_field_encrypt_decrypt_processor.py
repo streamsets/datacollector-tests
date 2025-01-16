@@ -87,7 +87,7 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
     pipeline = pipeline_builder.build('Field Decryption Pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
-    if Version(sdc_executor.version) >= Version("6.1.0"):
+    if Version(sdc_builder.version) >= Version("6.1.0"):
         pipeline.stages.get(label=field_decrypt.label).set_attributes(
             primary_key_provider=aws.kms_key_provider,
             authentication_method='WITH_CREDENTIALS',
@@ -146,7 +146,7 @@ def test_field_decrypt_wrong_input_type(sdc_builder, sdc_executor, aws):
     pipeline = pipeline_builder.build('Field Decryption Pipeline Wrong Input Type').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
-    if Version(sdc_executor.version) >= Version("6.1.0"):
+    if Version(sdc_builder.version) >= Version("6.1.0"):
         pipeline.stages.get(label=field_decrypt.label).set_attributes(
             primary_key_provider=aws.kms_key_provider,
             authentication_method='WITH_CREDENTIALS',
@@ -187,7 +187,7 @@ def test_field_decrypt_error_records(sdc_builder, sdc_executor, aws):
     pipeline = pipeline_builder.build('Field Decryption Pipeline Error Records').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
-    if Version(sdc_executor.version) >= Version("6.1.0"):
+    if Version(sdc_builder.version) >= Version("6.1.0"):
         pipeline.stages.get(label=field_decrypt.label).set_attributes(
             primary_key_provider=aws.kms_key_provider,
             authentication_method='WITH_CREDENTIALS',
@@ -427,7 +427,7 @@ def test_field_encrypt(sdc_builder, sdc_executor, aws):
     pipeline = pipeline_builder.build('Field Encryption Pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
-    if Version(sdc_executor.version) >= Version("6.1.0"):
+    if Version(sdc_builder.version) >= Version("6.1.0"):
         pipeline.stages.get(label=field_encrypt.label).set_attributes(
             primary_key_provider=aws.kms_key_provider,
             authentication_method='WITH_CREDENTIALS',
@@ -472,7 +472,7 @@ def test_field_encrypt_non_cacheable_cipher(sdc_builder, sdc_executor, aws):
     pipeline = pipeline_builder.build('Field Encryption Pipeline Non Cacheable Cipher').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
-    if Version(sdc_executor.version) >= Version("6.1.0"):
+    if Version(sdc_builder.version) >= Version("6.1.0"):
         pipeline.stages.get(label=field_encrypt.label).set_attributes(
             primary_key_provider=aws.kms_key_provider,
             authentication_method='WITH_CREDENTIALS',
@@ -519,7 +519,7 @@ def test_field_encrypt_out_of_range_config_value(sdc_builder, sdc_executor, aws,
     pipeline = pipeline_builder.build('Field Encryption Pipeline Out of Range Config Values').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
-    if Version(sdc_executor.version) >= Version("6.1.0"):
+    if Version(sdc_builder.version) >= Version("6.1.0"):
         pipeline.stages.get(label=field_encrypt.label).set_attributes(
             primary_key_provider=aws.kms_key_provider,
             authentication_method='WITH_CREDENTIALS',
