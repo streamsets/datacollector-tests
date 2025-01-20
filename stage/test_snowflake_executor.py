@@ -190,6 +190,75 @@ def test_snowflake_executor_with_file_uploader(sdc_builder, sdc_executor, snowfl
 
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.9.0'})
+@sdc_min_version("6.2.0")
+def test_snowflake_executor_with_aws_s3_destination(sdc_builder, sdc_executor, snowflake, aws):
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location='AWS_S3')
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    data = ("1,Iron Man\n"
+            "2,Captain America\n"
+            "3,Spidey\n")
+
+    work_dir = _prepare_work_dir(sdc_executor, data)
+
+    origin = pipeline_builder.add_stage('Directory', type='origin')
+    origin.file_name_pattern = '*.csv'
+    origin.data_format = 'WHOLE_FILE'
+    origin.files_directory = work_dir
+
+    s3_destination = pipeline_builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(
+        bucket=snowflake.aws_s3_stage.aws_s3_bucket_name,
+        data_format='WHOLE_FILE',
+        file_name_expression="${record:value('/fileInfo/filename')}",
+        partition_prefix=f'{snowflake.aws_s3_stage.aws_s3_key_prefix}/{storage_path}',
+        access_key_id=aws.aws_access_key_id,
+        secret_access_key=aws.aws_secret_access_key
+    )
+
+    snowflake_executor = pipeline_builder.add_stage('Snowflake', type='executor')
+
+    query_str = f"copy into STF_DB.STF_SCHEMA.{table_name} from @STF_DB.STF_SCHEMA.{stage_name}"
+
+    snowflake_executor.set_attributes(sql_queries=[query_str])
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    pipeline_finished = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    origin >> s3_destination
+    origin >= pipeline_finished
+    s3_destination >= snowflake_executor
+    snowflake_executor >= wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    engine.execute(f"create or replace table STF_DB.STF_SCHEMA.{table_name} (id integer, name string)")
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(f"Select cast($1 as integer), $2 from STF_DB.STF_SCHEMA.{table_name}")
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
+        result.close()
+        assert len(wiretap.output_records) == 1
+        assert data_from_database == [(row['id'], row['name']) for row in ROWS_IN_DATABASE]
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        snowflake.delete_staged_files(storage_path)
+        engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
+        engine.dispose()
+
+
+@snowflake
+@sdc_enterprise_lib_min_version({'snowflake': '1.9.0'})
 def test_snowflake_executor_multiple_queries(sdc_builder, sdc_executor, snowflake):
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
