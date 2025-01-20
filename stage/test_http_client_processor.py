@@ -40,6 +40,13 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-http-lib')
+    return hook
+
+
 @http
 @sdc_min_version("3.11.0")
 @pytest.mark.parametrize("one_request_per_batch", [True, False])

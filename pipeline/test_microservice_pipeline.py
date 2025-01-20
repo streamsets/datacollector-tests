@@ -12,12 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import requests
 from requests.auth import HTTPBasicAuth
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 
 HTTP_LISTENING_PORT = 8234
+
+
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-http-lib')
+    return hook
 
 
 def test_microservice_template_pipeline(sdc_executor):

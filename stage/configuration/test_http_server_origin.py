@@ -23,6 +23,13 @@ KEYSTORE_TYPE = 'JKS'
 KEYSTORE_PASSWORD = 'password'
 
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-http-lib')
+    return hook
+
+
 @stub
 @pytest.mark.parametrize('stage_attributes', [{'allow_extra_columns': False,
                                                'data_format': 'DELIMITED',
