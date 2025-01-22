@@ -43,7 +43,8 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
-        data_collector.add_stage_lib('streamsets-datacollector-http-lib')
+        if Version(data_collector.version) >= Version('6.1.0'):
+            data_collector.add_stage_lib('streamsets-datacollector-http-lib')
     return hook
 
 
