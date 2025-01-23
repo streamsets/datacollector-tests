@@ -1548,3 +1548,174 @@ def test_materialized_views_are_ignored(
     assert all([r.header.values['oracle.cdc.table'] in expected_tables 
                 for r in output_records]), f'All output records have to be from those tables {expected_tables}'
     assert len(error_records) == 0, 'No error records expected'
+
+
+@sdc_min_version("6.2.0")
+@pytest.mark.parametrize("table_not_in_catalog_action, expected_exception", [
+    ('ABORT', 'ORACLE_CDC_1109'),
+    ('DISCARD', None),
+    ('ERROR', None),
+])
+def test_alter_table_for_removed_table_in_online_catalog(
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    test_name,
+    table_not_in_catalog_action, 
+    expected_exception
+):
+    """ Oracle CDC origin mirrors the online catalog to the internal catalog at startup fase. This might lead to some inconsistencies when handling data
+    that is far enough in the past. This test is ensuring we properly handle that situation when a given table has been removed in some point in the timeline
+    after from when we start mining. The test consists on:
+    1. Create a given table
+    2. Issue some DDL over that table
+    3. Remove the table.
+    Then we start mining from point two so that the origin does intercent the DDL operation log but it is referencing to some table that does not exists in the
+    online catalog. In this situation we want to handle it depending on the configuration for the 'table_definition_not_in_catalog'.
+
+    Note: This only can happen for DDL operations. The reason is that we get all of the DDL operations from LogMiner but only DMLs that are related to the tables
+    we maintain in the internal catalog, so if no table in the internal catalog, no operation is processed related to it.
+    """
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
+    connection = database.engine.connect(); 
+    cleanup(connection.close)
+
+    table_name = get_random_string(string.ascii_letters, 10)
+    connection.execute(f"""
+        CREATE TABLE C##SDC.{table_name} (id NUMBER PRIMARY KEY, text VARCHAR(10) DEFAULT NULL)
+    """)
+    cleanup(lambda c: c.execute(f"""IF OBJECT_ID('C##SDC.{table_name}', 'U') IS NOT NULL 
+                                      DROP TABLE C##SDC.{table_name}"""), 
+            connection)
+
+    time.sleep(5)
+    utc_time = time.gmtime()
+    time.sleep(1)
+    connection.execute(f"""
+        ALTER TABLE C##SDC.{table_name} ADD new_column VARCHAR(100)
+    """)
+
+    connection.execute(f"""
+        DROP TABLE C##SDC.{table_name}
+    """)
+
+    # Build and start the pipeline.
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        start_mode='INSTANT', 
+        initial_instant=time.strftime('%Y-%m-%d %H:%M:%S', utc_time),
+        skip_unparseable_ddls=False,  # Setting this to false as this is colliding with the test. When there is no table available for a DDL it is considered as an unparseable DDL
+        table_definition_not_in_catalog_action=table_not_in_catalog_action,
+        **DefaultConnectionParameters(database)
+        | DefaultTableParameters(table_name)
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_cdc >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    handler.start_work(work); 
+    cleanup(handler.stop_work, work)
+
+    try:
+        handler.wait_for_status(work, status='RUN_ERROR', timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+        if table_not_in_catalog_action == 'ABORT':
+            status = sdc_executor.get_pipeline_status(pipeline).response.json()
+            assert expected_exception in status.get('message')
+        else:
+            assert False, 'It should time out waiting for RUN_ERROR'
+    except TimeoutError as e:
+        if table_not_in_catalog_action == 'ABORT':
+            assert False, 'It should get the status RUN_ERROR'
+        else:
+            sdc_executor.stop_pipeline(pipeline)
+            error_records = wiretap.error_records
+            output_records = wiretap.output_records
+            assert len(output_records) == 0, 'No output records'
+            if table_not_in_catalog_action == 'DISCARD':
+                assert len(error_records) == 0, 'No error records expected'
+            elif table_not_in_catalog_action == 'ERROR':
+                assert len(error_records) == 2, 'The DDL operation has to be sent to error sink'
+                assert f"ALTER TABLE C##SDC.{table_name}" in error_records[0].header.values["oracle.cdc.query"]
+                assert f"DROP TABLE C##SDC.{table_name}" in error_records[1].header.values["oracle.cdc.query"]
+                assert all(r.header._data['errorCode'] == 'ORACLE_CDC_1109' for r in error_records)
+
+
+@sdc_min_version("6.2.0")
+def test_alter_table_for_removed_table_in_online_catalog_but_intercepting_the_create(
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    test_name,
+):
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
+    connection = database.engine.connect(); 
+    cleanup(connection.close)
+
+    table_name = get_random_string(string.ascii_letters, 10)
+    utc_time = time.gmtime()
+    time.sleep(5)
+    connection.execute(f"""
+        CREATE TABLE C##SDC.{table_name} (id NUMBER PRIMARY KEY, text VARCHAR(10) DEFAULT NULL)
+    """)
+    cleanup(lambda c: c.execute(f"""IF OBJECT_ID('C##SDC.{table_name}', 'U') IS NOT NULL 
+                                      DROP TABLE C##SDC.{table_name}"""), 
+            connection)
+
+    connection.execute(f"""
+        ALTER TABLE C##SDC.{table_name} ADD new_column VARCHAR(100)
+    """)
+
+    # Just for generate some traffic
+    txn = connection.begin()
+    connection.execute(f"""
+        INSERT INTO C##SDC.{table_name} (id, text, new_column) VALUES (1, 'Test', 'Successful')
+    """)
+    txn.commit()
+
+    connection.execute(f"""
+        DROP TABLE C##SDC.{table_name}
+    """)
+
+    # Build and start the pipeline.
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        start_mode='INSTANT', 
+        initial_instant=time.strftime('%Y-%m-%d %H:%M:%S', utc_time),
+        skip_unparseable_ddls=False,  # Setting this to false as this is colliding with the test. When there is no table available for a DDL it is considered as an unparseable DDL
+        table_definition_not_in_catalog_action='ABORT',
+        **DefaultConnectionParameters(database)
+        | DefaultTableParameters(table_name)
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_cdc >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    handler.start_work(work); 
+    cleanup(handler.stop_work, work)
+
+    handler.wait_for_metric(work, "input_record_count", 1, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    sdc_executor.stop_pipeline(pipeline)
+
+    assert len(wiretap.error_records) == 0
+    output_records = wiretap.output_records
+    assert len(output_records) == 1
+    assert all( [r.header.values['oracle.cdc.table'] == table_name.upper() for r in output_records])
