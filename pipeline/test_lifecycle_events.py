@@ -124,7 +124,7 @@ def failing_receiver_pipeline(sdc_builder):
     yield pipeline
 
 
-@sdc_min_version('2.7.0.0')
+@sdc_min_version('6.0.0')
 def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event on pipeline start."""
     start_stage = generator_trash_builder.add_start_event_stage('Write to File')
@@ -154,7 +154,7 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         stop_pipelines(sdc_executor, [start_event_pipeline, successful_receiver_pipeline.pipeline])
 
 
-@sdc_min_version('3.17.0')
+@sdc_min_version('6.0.0')
 def test_start_event_with_job_info(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate jobId and jobName to pipeline start event"""
     start_stage = generator_trash_builder.add_start_event_stage('Write to File')
@@ -181,7 +181,7 @@ def test_start_event_with_job_info(generator_trash_builder, successful_receiver_
         stop_pipelines(sdc_executor, [start_event_pipeline, successful_receiver_pipeline.pipeline])
 
 
-@sdc_min_version('2.7.0.0')
+@sdc_min_version('6.0.0')
 def test_stop_event_user_action(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline is stopped by user."""
     stop_stage = generator_trash_builder.add_stop_event_stage('Write to File')
@@ -210,7 +210,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
     stop_pipelines(sdc_executor, [stop_event_pipeline, successful_receiver_pipeline.pipeline])
 
 
-@sdc_min_version('3.17.0')
+@sdc_min_version('6.0.0')
 def test_stop_event_with_job_info(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate jobId and jobName to pipeline stop event"""
     stop_stage = generator_trash_builder.add_stop_event_stage('Write to File')
@@ -239,7 +239,7 @@ def test_stop_event_with_job_info(generator_trash_builder, successful_receiver_p
         stop_pipelines(sdc_executor, [stop_event_pipeline, successful_receiver_pipeline.pipeline])
 
 
-@sdc_min_version('2.7.0.0')
+@sdc_min_version('6.0.0')
 def test_stop_event_finished(generator_finisher_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline finishes."""
     stop_stage = generator_finisher_builder.add_stop_event_stage('Write to File')
@@ -269,7 +269,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
         stop_pipelines(sdc_executor, [stop_event_pipeline, successful_receiver_pipeline.pipeline])
 
 
-@sdc_min_version('2.7.0.0')
+@sdc_min_version('6.0.0')
 def test_stop_event_failure(generator_failure_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline crashes."""
     stop_stage = generator_failure_builder.add_stop_event_stage('Write to File')
