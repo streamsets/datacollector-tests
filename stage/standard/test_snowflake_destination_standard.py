@@ -401,7 +401,12 @@ def test_auto_create_data_types(sdc_builder, sdc_executor, input, converter_type
 
 @snowflake
 @pytest.mark.parametrize('data,expected_value', DATA_MAP_SNOWFLAKE)
-def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, expected_value):
+@pytest.mark.parametrize('column_type', ['VARIANT', 'OBJECT'])
+def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, expected_value, column_type):
+
+    if Version(sdc_executor.version) < Version('6.2.0') and column_type == 'OBJECT':
+        pytest.skip('Support for OBJECT introduced in 6.2.0')
+
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
     engine = snowflake.engine
 
@@ -424,7 +429,8 @@ def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, e
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
-                                         on_record_error='STOP_PIPELINE')
+                                         on_record_error='STOP_PIPELINE',
+                                         data_drift_enabled=False)
 
     origin >> snowflake_destination
     pipeline = builder.build().configure_for_environment(snowflake)
@@ -432,9 +438,9 @@ def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, e
 
     try:
         # Create table
-        rs=engine.execute(f"""
+        rs = engine.execute(f"""
             CREATE TABLE {table_name} (
-                "VALUE" {'VARIANT'} NULL
+                "VALUE" {column_type} NULL
             )
         """)
         logger.info("Create Table Result")
@@ -447,6 +453,133 @@ def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, e
         rows = [row for row in rs]
         assert len(rows) == 1
         assert json.loads(rows[0][0]) == expected_value
+    finally:
+        if not keep_data:
+            try:
+                _delete_table(snowflake, table_name, stage_name)
+                _stop_pipeline(sdc_executor, pipeline)
+            except Exception as ex:
+                logger.error(ex)
+
+
+@sdc_min_version("6.2.0")
+@snowflake
+@pytest.mark.parametrize('data,expected_value', DATA_MAP_SNOWFLAKE)
+def test_data_types_map_using_data_drift(sdc_builder, sdc_executor, snowflake, keep_data, data, expected_value):
+    data["EXTRA_VALUE"] = 1
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
+    engine = snowflake.engine
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.stop_after_first_batch = True
+    origin.raw_data = json.dumps(data)
+
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    snowflake_destination = builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         on_record_error='STOP_PIPELINE',
+                                         data_drift_enabled=True)
+
+    origin >> snowflake_destination
+    pipeline = builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create table
+        rs = engine.execute(f"""
+            CREATE TABLE {table_name} (
+                "EXTRA_VALUE" NUMBER NULL
+            )
+        """)
+        logger.info("Create Table Result")
+        logger.info(rs.fetchall())
+
+        # Run pipeline and read from Snowflake to assert
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        rs = engine.execute(f'select VALUE from "{table_name}"')
+        rows = [row for row in rs]
+        assert len(rows) == 1
+        assert json.loads(rows[0][0]) == expected_value
+
+        rs = engine.execute(f'describe table "{table_name}"')
+        rows = [row for row in rs]
+        assert len(rows) == 2
+        has_value_field = False
+        for row in rows:
+            if row[0] == 'VALUE':
+                assert row[1] == 'VARIANT'
+                has_value_field = True
+        assert has_value_field, "VALUE field was not created by the pipeline using data drift"
+
+    finally:
+        if not keep_data:
+            try:
+                _delete_table(snowflake, table_name, stage_name)
+                _stop_pipeline(sdc_executor, pipeline)
+            except Exception as ex:
+                logger.error(ex)
+
+
+@sdc_min_version("6.2.0")
+@snowflake
+@pytest.mark.parametrize('data,expected_value', DATA_MAP_SNOWFLAKE)
+def test_data_types_map_using_table_auto_create(sdc_builder, sdc_executor, snowflake, keep_data, data, expected_value):
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
+    engine = snowflake.engine
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.stop_after_first_batch = True
+    origin.raw_data = json.dumps(data)
+
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    snowflake_destination = builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         on_record_error='STOP_PIPELINE',
+                                         table_auto_create=True)
+
+    origin >> snowflake_destination
+    pipeline = builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Run pipeline and read from Snowflake to assert
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        rs = engine.execute(f'select VALUE from "{table_name}"')
+        rows = [row for row in rs]
+        assert len(rows) == 1
+        assert json.loads(rows[0][0]) == expected_value
+
+        rs = engine.execute(f'describe table "{table_name}"')
+        rows = [row for row in rs]
+        assert len(rows) == 1
+        assert rows[0][1] == 'VARIANT'
+
     finally:
         if not keep_data:
             try:
