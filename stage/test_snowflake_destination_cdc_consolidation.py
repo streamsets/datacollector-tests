@@ -14,7 +14,10 @@
 
 import json
 import logging
+import os
 import string
+import tempfile
+import textwrap
 
 import pytest
 import sqlalchemy
@@ -424,6 +427,131 @@ def test_cdc_snowflake_multiple_tables_and_ops(sdc_builder, sdc_executor, snowfl
         engine.dispose()
 
 
+@sdc_min_version('6.2.0')
+@pytest.mark.parametrize('use_upper_case', [False, True])
+@pytest.mark.parametrize('pk_columns,'
+                         'ops,'
+                         'expected_db_rows',
+                         [
+                             (
+                                 ['col_1'],
+                                 [
+                                     {'TABLE': 0, 'OP': 'INSERT', 'ROWS': {'col_1': 1, 'col_2': 'Rogelio Federer'}},
+                                     {'TABLE': 1, 'OP': 'INSERT', 'ROWS': {'col_1': 2, 'col_2': 'Rafa Nadal'}},
+                                     {'TABLE': 0, 'OP': 'INSERT', 'ROWS': {'col_1': 3, 'col_2': 'Domi Thiem'}},
+                                     {'TABLE': 1, 'OP': 'INSERT', 'ROWS': {'col_1': 4, 'col_2': 'Juan Del Potro'}},
+                                     {'TABLE': 0, 'OP': 'UPDATE', 'ROWS': {'col_1': 1, 'col_2': 'Roger Federer'}},
+                                     {'TABLE': 1, 'OP': 'UPDATE', 'ROWS': {'col_1': 2, 'col_2': 'Rafael Nadal'}},
+                                     {'TABLE': 0, 'OP': 'UPDATE', 'ROWS': {'col_1': 3, 'col_2': 'Dominic Thiem'}},
+                                     {'TABLE': 1, 'OP': 'DELETE', 'ROWS': {'col_1': 4, 'col_2': 'Juan Del Potro'}}
+                                 ],
+                                 [
+                                     [{'col_1': 1, 'col_2': 'Roger Federer'}, {'col_1': 3, 'col_2': 'Dominic Thiem'}],
+                                     [{'col_1': 2, 'col_2': 'Rafael Nadal'}]]
+                             )
+                         ], ids=['multiple-ops-and-tables'])
+def test_cdc_snowflake_multiple_tables_and_ops_using_snowflake_pk_location(
+        sdc_builder, sdc_executor,
+        snowflake, use_upper_case, pk_columns, ops, expected_db_rows):
+    """
+    Similar to test above, but we make sure operations for different tables are properly handled
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        Directory source  >>  Expression Evaluator >> Field Remover >> snowflake_destination
+    """
+    stage_location = get_stage_location(sdc_builder, "INTERNAL")
+    table_name_1 = f'STF_TABLE_{get_random_string(string.ascii_lowercase, 5)}'
+    table_name_2 = f'STF_TABLE_{get_random_string(string.ascii_lowercase, 5)}'
+    table_names = [table_name_1, table_name_2]
+    create_table_1_query = f'CREATE TABLE "{table_name_1}" ("col_1" NUMBER, "col_2" STRING, primary key ("col_1"));'
+    create_table_2_query = f'CREATE TABLE "{table_name_2}" ("col_1" NUMBER, "col_2" STRING, primary key ("col_1"));'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_lowercase, 5)}'
+    formatted_stage_name = stage_name
+    formatted_table_name_1 = table_name_1
+    formatted_table_name_2 = table_name_2
+    if use_upper_case:
+        formatted_stage_name = stage_name.upper()
+        create_table_1_query = create_table_1_query.upper()
+        create_table_2_query = create_table_2_query.upper()
+        formatted_table_name_1 = table_name_1.upper()
+        formatted_table_name_2 = table_name_2.upper()
+    engine = snowflake.engine
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(formatted_stage_name, storage_path, stage_location=stage_location)
+
+    records, pk_header_attribute_expressions = generate_cdc_records_with_header(pk_columns, ops)
+    for record, op in zip(records, ops):
+        record['TABLE'] = table_names[op['TABLE']]
+        record['PK_UPDATE'] = {}
+
+    file_directory: str = os.path.join(tempfile.gettempdir(), get_random_string())
+
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        sdc_executor.execute_shell(f'mkdir -m 777 {file_directory}')
+        file_name = f'{get_random_string()}.txt'
+
+        # Get CDC origin simulator for given operations
+        pipeline = generate_snowflake_cdc_pipeline(
+            pipeline_builder, snowflake, stage_name, "${record:value('/TABLE')}",
+            'SNOWFLAKE', pk_columns, records, pk_header_attribute_expressions,
+            stage_location=stage_location, column_fields_to_ignore='TABLE',
+            table_auto_create=False, data_drift_enabled=False,
+            use_upper_case=use_upper_case,
+            pipeline_source=generate_directory_source(pipeline_builder,
+                                                      input_file_directory=file_directory,
+                                                      input_file_name=file_name)
+        )
+        sdc_executor.add_pipeline(pipeline)
+
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline=pipeline)
+        pipeline_cmd.wait_for_status(status='RUNNING', timeout_sec=30)
+
+        logger.debug(f"Executing query: {create_table_1_query}")
+        snowflake.engine.execute(create_table_1_query)
+        logger.debug(f"Executing query: {create_table_2_query}")
+        snowflake.engine.execute(create_table_2_query)
+        logger.debug("Sending records to Directory origin...")
+        file_content = '\\n'.join(json.dumps(record) for record in records)
+        file_content = file_content.replace("\"", "\\\"")
+        file_writer(sdc_executor, os.path.join(file_directory, file_name), file_content)
+
+        pipeline_cmd.wait_for_pipeline_output_records_count(8, timeout_sec=30)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
+
+        # And assert the results are correct
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.Snowflake_01.errorRecords.counter').count == 0
+
+        result = engine.execute(f'SELECT * FROM "{formatted_table_name_1}";')
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        result.close()
+
+        expected_data_0 = sorted(tuple(v for k, v in row.items()) for row in expected_db_rows[0])
+        assert sorted(data_from_database) == expected_data_0
+
+        result = engine.execute(f'SELECT * FROM "{formatted_table_name_2}";')
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        result.close()
+
+        expected_data_1 = sorted(tuple(v for k, v in row.items()) for row in expected_db_rows[1])
+        assert sorted(data_from_database) == expected_data_1
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        logger.debug('Dropping Snowflake stage %s ...', formatted_stage_name)
+        snowflake.drop_entities(stage_name=formatted_stage_name)
+        engine.execute(f'DROP TABLE "{formatted_table_name_1}"')
+        engine.execute(f'DROP TABLE "{formatted_table_name_2}"')
+        engine.dispose()
+        sdc_executor.execute_shell(f'rm -rf {file_directory}')
+
+
 def generate_cdc_records_with_header(pk_columns, ops):
     """
         Generates records and headers from the operations defined.
@@ -477,14 +605,16 @@ def is_pk_column_update(pk_columns, op, prev_op):
 
 def generate_snowflake_cdc_pipeline(pipeline_builder, snowflake, stage_name, table_name, primary_key_location,
                                     pk_columns, records, pk_header_attribute_expressions, stage_location='INTERNAL',
-                                    column_fields_to_ignore=''):
+                                    column_fields_to_ignore='', table_auto_create=True, data_drift_enabled=True,
+                                    pipeline_source=None, use_upper_case=True):
     """
         Generates pipeline with the records and headers within the stages used, from the operations we want to test.
     """
     # Build Dev Raw Data Source
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    raw_data = '\n'.join(json.dumps(record) for record in records)
-    dev_raw_data_source.set_attributes(data_format='JSON',
+    if pipeline_source is None:
+        raw_data = '\n'.join(json.dumps(record) for record in records)
+        pipeline_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        pipeline_source.set_attributes(data_format='JSON',
                                        raw_data=raw_data,
                                        stop_after_first_batch=True)
 
@@ -513,8 +643,13 @@ def generate_snowflake_cdc_pipeline(pipeline_builder, snowflake, stage_name, tab
                                          table=table_name,
                                          column_fields_to_ignore=column_fields_to_ignore,
                                          processing_cdc_data=True,
-                                         table_auto_create=True,
-                                         primary_key_location=primary_key_location)
+                                         table_auto_create=table_auto_create,
+                                         primary_key_location=primary_key_location,
+                                         data_drift_enabled=data_drift_enabled)
+
+    snowflake_destination.configuration.update({
+        "config.data.upperCaseSchema": use_upper_case
+    })
 
     if primary_key_location == 'TABLE':
         snowflake_destination.set_attributes(table_key_columns=[{
@@ -522,6 +657,42 @@ def generate_snowflake_cdc_pipeline(pipeline_builder, snowflake, stage_name, tab
                                                  "table": table_name
                                              }])
 
-    dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
+    pipeline_source >> expression_evaluator >> field_remover >> snowflake_destination
 
     return pipeline_builder.build().configure_for_environment(snowflake)
+
+
+def generate_directory_source(pipeline_builder, input_file_directory='', input_file_name=''):
+    pipeline_source = pipeline_builder.add_stage('Directory')
+    pipeline_source.set_attributes(
+        files_directory=input_file_directory,
+        file_name_pattern=input_file_name,
+        data_format='JSON',
+    )
+
+    return pipeline_source
+
+
+def file_writer(sdc_executor, file_path, file_contents):
+    encoding = 'utf8'
+    file_writer_script_binary = """
+        with open('{filepath}', 'wt') as f:
+            f.write('{file_contents}')
+    """
+
+    builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+    jython_evaluator = builder.add_stage('Jython Evaluator')
+
+    file_writer_script = file_writer_script_binary
+    jython_evaluator.script = textwrap.dedent(file_writer_script).format(filepath=str(file_path),
+                                                                         file_contents=file_contents,
+                                                                         encoding=encoding)
+    trash = builder.add_stage('Trash')
+    dev_raw_data_source >> jython_evaluator >> trash
+    pipeline = builder.build('File writer pipeline')
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.remove_pipeline(pipeline)
