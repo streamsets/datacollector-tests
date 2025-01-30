@@ -56,7 +56,7 @@ def connect_mysql_using_hashicorp_vault(sdc_builder, sdc_executor, credential_st
 
     # Set username and password in the Credential Store
     if mount_point in ("nonexistent", "myengine/nonexistent"):
-        with pytest.raises(ValueError, Forbidden) as e:
+        with pytest.raises((ValueError, Forbidden)) as e:
             credential_store.set_secret(f'{mount_point}/{secret_path}', 'root', 'user')
         assert ('The secret path must start with the mount point defined' in str(e.value) or 'permission denied' in str(e.value))
         pass
