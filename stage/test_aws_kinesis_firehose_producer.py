@@ -27,11 +27,23 @@ logger = logging.getLogger(__name__)
 S3_SANDBOX_PREFIX = 'sandbox'
 
 SERVICE_ENDPOINT_FORMAT = '{}.{}.amazonaws.com'
-BUFFER_DATA_TIME_SEC = 8
+
+
+@pytest.fixture(scope='module')
+def s3_configuration(aws):
+    resp = aws.firehose.describe_delivery_stream(DeliveryStreamName=aws.firehose_stream_name)
+    dest = resp['DeliveryStreamDescription']['Destinations'][0]
+    s3_destination_information = dest['S3DestinationDescription']
+    s3_configuration = {
+        'RoleARN': s3_destination_information["RoleARN"],  # Role ARN
+        'BucketARN': s3_destination_information["BucketARN"],  # S3 Bucket ARN
+        'CompressionFormat': s3_destination_information["CompressionFormat"],  # Compression format
+    }
+    return s3_configuration
 
 
 @aws('firehose', 's3')
-def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
+def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws, s3_configuration):
     """Test for Firehose target stage. This test assumes Firehose is destined to S3 bucket. We run a dev raw data source
     generator to Firehose destination which is pre-setup to put to S3 bucket. We then read S3 bucket using STF client
     to assert data between the client to what has been ingested into the pipeline. The pipeline looks like:
@@ -44,7 +56,12 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
 
     # setup test static
     s3_bucket = aws.s3_bucket_name
-    stream_name = aws.firehose_stream_name
+    stream_name = f'{aws.firehose_stream_name}-{get_random_string(string.ascii_letters, 10)}'
+
+    # Create a Delivery Stream for Firehose
+    _create_delivery_stream(s3_configuration=s3_configuration, firehose_client=firehose_client, stream_name=stream_name)
+    _wait_for_delivery_stream_status(stream_name=stream_name, status='ACTIVE', firehose_client=firehose_client)
+
     # json formatted string
     random_raw_str = f'{{"text":"{get_random_string(string.ascii_letters, 10)}"}}'
     record_count = 1  # random_raw_str record size
@@ -81,7 +98,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
+            time.sleep(iteration)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
@@ -90,10 +107,12 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
         if len(s3_put_keys) > 0:
             delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
             s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        logger.debug('Deleting %s Firehose stream on AWS ...', stream_name)
+        firehose_client.delete_delivery_stream(DeliveryStreamName=stream_name)
 
 
 @aws('firehose', 's3')
-def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws):
+def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws, s3_configuration):
     """Test for Firehose target stage with other as region and service endpoint.
     This test assumes Firehose is destined to S3 bucket. We run a dev raw data source generator to Firehose destination
     which is pre-setup to put to S3 bucket.
@@ -111,7 +130,12 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
 
     # setup test static
     s3_bucket = aws.s3_bucket_name
-    stream_name = aws.firehose_stream_name
+    stream_name = f'{aws.firehose_stream_name}-{get_random_string(string.ascii_letters, 10)}'
+
+    # Create a Delivery Stream for Firehose
+    _create_delivery_stream(s3_configuration=s3_configuration, firehose_client=firehose_client, stream_name=stream_name)
+    _wait_for_delivery_stream_status(stream_name=stream_name, status='ACTIVE', firehose_client=firehose_client)
+
     # json formatted string
     random_raw_str = f'{{"text":"{get_random_string(string.ascii_letters, 10)}"}}'
     record_count = 1  # random_raw_str record size
@@ -153,7 +177,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
+            time.sleep(iteration)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
@@ -162,6 +186,8 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
         if len(s3_put_keys) > 0:
             delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
             s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        logger.debug('Deleting %s Firehose stream on AWS ...', stream_name)
+        firehose_client.delete_delivery_stream(DeliveryStreamName=stream_name)
 
 
 @aws('firehose', 's3')
@@ -174,7 +200,8 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
     'use_custom_endpoint_and_signing_region',
     'use_custom_endpoint_and_custom_signing_region'
 ])
-def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_builder, sdc_executor, aws, specify_region):
+def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_builder, sdc_executor, aws, specify_region,
+                                                                       s3_configuration):
     """Test for Firehose target stage with other as region and service endpoint.
 
     Firehose Destination pipeline:
@@ -185,7 +212,11 @@ def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_build
 
     # setup test static
     s3_bucket = aws.s3_bucket_name
-    stream_name = aws.firehose_stream_name
+    stream_name = f'{aws.firehose_stream_name}-{get_random_string(string.ascii_letters, 10)}'
+    # Create a Delivery Stream for Firehose
+    _create_delivery_stream(s3_configuration=s3_configuration, firehose_client=firehose_client, stream_name=stream_name)
+    _wait_for_delivery_stream_status(stream_name=stream_name, status='ACTIVE', firehose_client=firehose_client)
+
     # json formatted string
     random_raw_str = f'{{"text":"{get_random_string(string.ascii_letters, 10)}"}}'
     record_count = 1  # random_raw_str record size
@@ -258,7 +289,7 @@ def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_build
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
+            time.sleep(iteration)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
@@ -267,6 +298,8 @@ def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_build
         if len(s3_put_keys) > 0:
             delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
             s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        logger.debug('Deleting %s Firehose stream on AWS ...', stream_name)
+        firehose_client.delete_delivery_stream(DeliveryStreamName=stream_name)
 
 
 @aws('firehose', 's3')
@@ -283,7 +316,8 @@ def test_firehose_destination_to_s3_different_region_types_for_kinesis(sdc_build
 def test_firehose_destination_to_s3_using_assume_role_with_different_region_definition_types(sdc_builder,
                                                                                              sdc_executor,
                                                                                              aws,
-                                                                                             specify_region):
+                                                                                             specify_region,
+                                                                                             s3_configuration):
     """Test for Firehose target stage using assume role with different region definition types.
 
     Firehose Destination pipeline:
@@ -294,7 +328,12 @@ def test_firehose_destination_to_s3_using_assume_role_with_different_region_defi
 
     # setup test static
     s3_bucket = aws.s3_bucket_name
-    stream_name = aws.firehose_stream_name
+    stream_name = f'{aws.firehose_stream_name}-{get_random_string(string.ascii_letters, 10)}'
+
+    # Create a Delivery Stream for Firehose
+    _create_delivery_stream(s3_configuration=s3_configuration, firehose_client=firehose_client, stream_name=stream_name)
+    _wait_for_delivery_stream_status(stream_name=stream_name, status='ACTIVE', firehose_client=firehose_client)
+
     # json formatted string
     random_raw_str = f'{{"text":"{get_random_string(string.ascii_letters, 10)}"}}'
     record_count = 1  # random_raw_str record size
@@ -355,7 +394,7 @@ def test_firehose_destination_to_s3_using_assume_role_with_different_region_defi
             logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(iteration * BUFFER_DATA_TIME_SEC)
+            time.sleep(iteration)
 
         assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
@@ -364,6 +403,8 @@ def test_firehose_destination_to_s3_using_assume_role_with_different_region_defi
         if len(s3_put_keys) > 0:
             delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
             s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        logger.debug('Deleting %s Firehose stream on AWS ...', stream_name)
+        firehose_client.delete_delivery_stream(DeliveryStreamName=stream_name)
 
 
 def _ensure_pipeline_is_stopped(sdc_executor, pipeline):
@@ -394,3 +435,35 @@ def _get_firehose_data(s3_client, s3_bucket, random_raw_str):
         logger.info(f'Response Content: {list_s3_objs}')
 
     return s3_put_keys
+
+
+def _create_delivery_stream(s3_configuration, firehose_client, stream_name):
+    """Create a delivery stream for Firehose"""
+    try:
+        firehose_client.create_delivery_stream(DeliveryStreamName=stream_name,
+                                               S3DestinationConfiguration=s3_configuration)
+    except Exception as error:
+        raise Exception('Exception error: (%s) trying to create the Firehose Stream %s.', error, stream_name)
+
+
+def _wait_for_delivery_stream_status(stream_name, status, firehose_client, timeout_sec=60):
+    """Wait for a given Firehose stream status"""
+    logger.debug('Waiting for Firehose stream status %s on the stream %s ...', status, stream_name)
+    start_waiting_time = time.time()
+    stop_waiting_time = start_waiting_time + timeout_sec
+
+    while time.time() < stop_waiting_time:
+        response = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
+        logger.debug('response.content: %s', response)
+        if not response:
+            continue
+
+        current_status = response['DeliveryStreamDescription']['DeliveryStreamStatus']
+        if current_status == status:
+            logger.debug('Firehose stream (%s) has reached state : %s', stream_name, current_status)
+            return status
+
+        time.sleep(1)
+
+    raise Exception('Timed out after %s seconds while waiting for status %s on stream %s',
+                    timeout_sec, status, stream_name)
