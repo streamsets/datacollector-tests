@@ -1179,21 +1179,26 @@ def test_max_columns_property(sdc_builder, sdc_executor, snowflake, max_columns,
     'max_chars_per_column, variant_length',
     [(4096, 512), (1024, 1024), (1024, 2048), (4096, 10000), (15000, 10000)]
 )
+@pytest.mark.parametrize('column_type', ['OBJECT', 'VARIANT'])
 def test_max_chars_per_column_property(
         sdc_builder,
         sdc_executor,
         snowflake,
         read_values_as_string,
         max_chars_per_column,
-        variant_length
+        variant_length,
+        column_type
 ):
     """
-    Tests that the Snowflake Bulk Origin correctly long variant values of over 10000 chars when defining properly the
+    Tests that the Snowflake Bulk Origin correctly long variant or object values of over 10000 chars when defining properly the
     Max Characters per Column property.
 
     The pipeline created looks like:
         Snowflake Bulk Origin >> Wiretap
     """
+    if Version(sdc_executor.version) < Version('6.2.0') and column_type == 'OBJECT':
+        pytest.skip('Support for OBJECT introduced in 6.2.0')
+
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -1221,7 +1226,7 @@ def test_max_chars_per_column_property(
     sdc_executor.add_pipeline(pipeline)
 
     column_name = 'LONG_VALUE'
-    columns = [{'name': column_name, 'type': 'VARIANT', 'primary_key': True}]
+    columns = [{'name': column_name, 'type': column_type, 'primary_key': True}]
     inserted_records = [
         '{' +
             '"Array":[1,2,3],' +
