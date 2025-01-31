@@ -260,6 +260,81 @@ def test_snowflake_executor_with_aws_s3_destination(sdc_builder, sdc_executor, s
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.9.0'})
 @sdc_min_version("6.2.0")
+def test_snowflake_executor_with_azure_blob_storage_destination(sdc_builder, sdc_executor, snowflake):
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    folder_path = get_random_string(string.ascii_letters, 10)
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{folder_path}'
+    snowflake.create_stage(stage_name, storage_path, stage_location='AZURE')
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    data = ("1,Iron Man\n"
+            "2,Captain America\n"
+            "3,Spidey\n")
+
+    work_dir = _prepare_work_dir(sdc_executor, data)
+
+    origin = pipeline_builder.add_stage('Directory', type='origin')
+    origin.file_name_pattern = '*.csv'
+    origin.data_format = 'WHOLE_FILE'
+    origin.files_directory = work_dir
+
+    snowflake_azure_config = snowflake._SnowflakeDataWarehouseWithStages__stages["AZURE"]
+    azure_destination = pipeline_builder.add_stage('Azure Blob Storage', type='destination')
+    azure_destination.set_attributes(
+        account_fqdn=f'{snowflake_azure_config.azure_storage_account_name}.blob.core.windows.net',
+        authentication_method='SAS_TOKEN',
+        azure_sas_token=snowflake_azure_config.azure_storage_sas_token,
+        blob_type='BLOCK',
+        blob_prefix=f'{folder_path}/sdc-',
+        data_format='WHOLE_FILE',
+        file_name_expression="${record:value('/fileInfo/filename')}"
+    )
+    azure_destination.configuration.update({
+        "config.connection.storageContainer": STORAGE_BUCKET_CONTAINER
+    })
+
+    snowflake_executor = pipeline_builder.add_stage('Snowflake', type='executor')
+
+    query_str = f"copy into STF_DB.STF_SCHEMA.{table_name} from @STF_DB.STF_SCHEMA.{stage_name}"
+
+    snowflake_executor.set_attributes(sql_queries=[query_str])
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    pipeline_finished = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    origin >> azure_destination
+    origin >= pipeline_finished
+    azure_destination >= snowflake_executor
+    snowflake_executor >= wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    engine.execute(f"create or replace table STF_DB.STF_SCHEMA.{table_name} (id integer, name string)")
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(f"Select cast($1 as integer), $2 from STF_DB.STF_SCHEMA.{table_name}")
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
+        result.close()
+        assert len(wiretap.output_records) == 1
+        assert data_from_database == [(row['id'], row['name']) for row in ROWS_IN_DATABASE]
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        snowflake.delete_staged_files(storage_path)
+        engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
+        engine.dispose()
+
+
+@snowflake
+@sdc_enterprise_lib_min_version({'snowflake': '1.9.0'})
+@sdc_min_version("6.2.0")
 def test_snowflake_executor_with_google_cloud_storage_destination(sdc_builder, sdc_executor, snowflake):
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
