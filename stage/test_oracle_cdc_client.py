@@ -1801,3 +1801,80 @@ def test_truncate_table_for_removed_table_in_online_catalog(
     assert len(output_records) == 10, 'Output records should match the inserts for the existing table'
     assert len(error_records) == 0, 'No error records expected'
     assert all(r.header.values['oracle.cdc.table'] == table_name_2.upper() for r in output_records)
+
+
+@sdc_min_version("6.2.0")
+def test_redo_log_with_removed_column(
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    test_name,
+):
+    """ Oracle's origin initially mirrors the online catalog to its internal and then evolves from it reacting to DDL operations.
+    There are some situations where there is a discrepancy on the format of the logs and the format of the catalog. E.g.:
+    1. A table is created with a given COLUMN column.
+    2. Some data is inserted using that COLUMN
+    3. An alter table is issued so that the COLUMN gets removed.
+    4. At this point in time we do start the Oracle origin, configured to start reading from point 2.
+    When the logs are flowing to the Oracle CDC's origin there is a missmatch with the internal catalog because the internal catalog
+    is a mirror from the current (i.e. after poitn 4) catalog. As there is no information on how to decode the COLUMN's data that
+    is comming from DML logs, we do ignore it."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
+    connection = database.engine.connect(); 
+    cleanup(connection.close)
+
+    table_name = get_random_string(string.ascii_letters, 10)
+    connection.execute(f"CREATE TABLE C##SDC.{table_name} (id NUMBER PRIMARY KEY, text VARCHAR(10) DEFAULT NULL)")
+    cleanup(lambda c: c.execute(f"""IF OBJECT_ID('C##SDC.{table_name}', 'U') IS NOT NULL 
+                                      DROP TABLE C##SDC.{table_name}"""), connection)
+
+    time.sleep(5)
+    utc_time = time.gmtime()
+    t=connection.begin()
+    connection.execute(f"""
+    BEGIN
+    FOR v_id IN 1..10 LOOP
+        EXECUTE IMMEDIATE 'INSERT INTO C##SDC.{table_name} (id, text) VALUES ('|| v_id || ', ''Some text'')';
+    END LOOP;
+    COMMIT;
+    END;
+    """)
+    t.commit()
+
+    connection.execute(f"""
+        ALTER TABLE C##SDC.{table_name} DROP COLUMN text
+    """)
+
+    # Build and start the pipeline.
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        start_mode='INSTANT', 
+        initial_instant=time.strftime('%Y-%m-%d %H:%M:%S', utc_time),
+        tables_filter=[{"tablesInclusionPattern": table_name}],
+        **DefaultConnectionParameters(database) 
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_cdc >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    handler.start_work(work); 
+    cleanup(handler.stop_work, work)
+
+    handler.wait_for_metric(work, "input_record_count", 10, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    sdc_executor.stop_pipeline(pipeline)
+    error_records = wiretap.error_records
+    output_records = wiretap.output_records
+
+    assert len(output_records) == 10, 'Output records should match the inserts for the existing table'
+    assert len(error_records) == 0, 'No error records expected'
+    assert all([[(k, int(v.value)) for k,v in output_record.field.items()] == [("ID", id+1)] for id,output_record in enumerate(output_records)])
