@@ -1719,3 +1719,85 @@ def test_alter_table_for_removed_table_in_online_catalog_but_intercepting_the_cr
     output_records = wiretap.output_records
     assert len(output_records) == 1
     assert all( [r.header.values['oracle.cdc.table'] == table_name.upper() for r in output_records])
+
+
+@sdc_min_version("6.2.0")
+def test_truncate_table_for_removed_table_in_online_catalog(
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    test_name,
+):
+    """ We want to test that a TRUNCATE operation on a table that is already removed is not making the whole pipeline to fail.
+    In order to test it we need to create two tables. One that is the target of the truncate and is removed before the pipeline starts
+    and the other that will still exists. We need at least one table to remain as if there is no table of interest in the online
+    catalog, then no DML operations will be processed. TRUNCATE is a DDL actually but gets processed as a DML. """
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
+    connection = database.engine.connect(); 
+    cleanup(connection.close)
+
+    table_name = get_random_string(string.ascii_letters, 10)
+    table_name_2 = get_random_string(string.ascii_letters, 10)
+    connection.execute(f"CREATE TABLE C##SDC.{table_name} (id NUMBER PRIMARY KEY, text VARCHAR(10) DEFAULT NULL)")
+    cleanup(lambda c: c.execute(f"""IF OBJECT_ID('C##SDC.{table_name}', 'U') IS NOT NULL 
+                                      DROP TABLE C##SDC.{table_name}"""), connection)
+    connection.execute(f"CREATE TABLE C##SDC.{table_name_2} (id NUMBER PRIMARY KEY, text VARCHAR(10) DEFAULT NULL)")
+    cleanup(lambda c: c.execute(f"DROP TABLE C##SDC.{table_name}"))
+
+    time.sleep(5)
+    utc_time = time.gmtime()
+    t=connection.begin()
+    connection.execute(f"""
+    BEGIN
+    FOR v_id IN 1..10 LOOP
+        EXECUTE IMMEDIATE 'INSERT INTO C##SDC.{table_name_2} (id) VALUES ('|| v_id || ')';
+    END LOOP;
+    FOR v_id IN 1..10 LOOP
+        EXECUTE IMMEDIATE 'INSERT INTO C##SDC.{table_name} (id) VALUES ('|| v_id || ')';
+    END LOOP;
+    COMMIT;
+    END;
+    """)
+    t.commit()
+
+    connection.execute(f"""
+        TRUNCATE TABLE C##SDC.{table_name}
+    """)
+
+    connection.execute(f"""
+        DROP TABLE C##SDC.{table_name}
+    """)
+
+    # Build and start the pipeline.
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        start_mode='INSTANT', 
+        initial_instant=time.strftime('%Y-%m-%d %H:%M:%S', utc_time),
+        tables_filter=[{"tablesInclusionPattern": table_name_2}, {"tablesInclusionPattern": table_name}],
+        **DefaultConnectionParameters(database) 
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    oracle_cdc >> wiretap.destination
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    handler.start_work(work); 
+    cleanup(handler.stop_work, work)
+
+    handler.wait_for_metric(work, "input_record_count", 10, timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    sdc_executor.stop_pipeline(pipeline)
+    error_records = wiretap.error_records
+    output_records = wiretap.output_records
+
+    assert len(output_records) == 10, 'Output records should match the inserts for the existing table'
+    assert len(error_records) == 0, 'No error records expected'
+    assert all(r.header.values['oracle.cdc.table'] == table_name_2.upper() for r in output_records)
