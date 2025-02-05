@@ -186,6 +186,12 @@ DATA_MAP_SNOWFLAKE = [
     ({"VALUE": {"uno": "dos"}}, {'uno': 'dos'})
 ]
 
+DATA_MAP_SNOWFLAKE_FOR_DATA_DRIFT = [
+    ({"VALUE": {"fullDocument": {"uno": "dos"}}, "EXTRA_VALUE": 1}, {'fullDocument': {'uno': 'dos'}}),
+    ({"VALUE": {"fullDocument": ["uno", "dos"]}, "EXTRA_VALUE": 1}, {'fullDocument': ['uno', 'dos']}),
+    ({"VALUE": {"uno": "dos"}, "EXTRA_VALUE": 1}, {'uno': 'dos'})
+]
+
 DATABASE_OBJECTS_NAMES = [
     ('random', f'STF_{get_random_string(string.ascii_uppercase, 10)}'),
     ('table', 'TABLE'),
@@ -464,9 +470,8 @@ def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, e
 
 @sdc_min_version("6.2.0")
 @snowflake
-@pytest.mark.parametrize('data,expected_value', DATA_MAP_SNOWFLAKE)
+@pytest.mark.parametrize('data,expected_value', DATA_MAP_SNOWFLAKE_FOR_DATA_DRIFT)
 def test_data_types_map_using_data_drift(sdc_builder, sdc_executor, snowflake, keep_data, data, expected_value):
-    data["EXTRA_VALUE"] = 1
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
     engine = snowflake.engine
 
