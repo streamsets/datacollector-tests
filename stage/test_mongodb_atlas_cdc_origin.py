@@ -610,7 +610,7 @@ def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb,
 
         if batch_limitation == 'WAIT_TIME':
             # Execution time is around +-2 seconds around the max batch wait time, which is what we expect it to wait
-            assert (max_wait_time*1.2) > total_time > (max_wait_time*0.8)
+            assert (max_wait_time*1.3) > total_time > (max_wait_time*0.9)
         else:
             # Execution time is lower the max batch wait time
             assert total_time < max_wait_time
