@@ -849,3 +849,135 @@ def test_mongodb_origin_duplicate_dates(sdc_builder, sdc_executor, mongodb, batc
     finally:
         logger.info('Dropping %s database...', database_name)
         mongodb.engine.drop_database(database_name)
+
+
+@mongodb('legacy')
+def test_mongodb_origin_el_support(sdc_builder, sdc_executor, mongodb):
+    """
+    Test EL fields are working: Create 3 simple documents in MongoDB and confirm that MongoDB origin reads them, when the EL fields configured.
+
+    The pipeline looks like:
+        mongodb_origin >> wiretap
+    """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    time_in_el = '${2000 * SECONDS}'
+    mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
+    mongodb_origin.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10),
+                                  connect_timeout_in_ms=time_in_el,
+                                  max_connection_idle_time_in_ms=time_in_el,
+                                  max_connection_life_time_in_ms=time_in_el,
+                                  max_wait_time_in_ms=time_in_el,
+                                  server_selection_timeout_in_ms=time_in_el,
+                                  heartbeat_connect_timeout_in_ms=time_in_el,
+                                  heartbeat_socket_timeout_in_ms=time_in_el,
+                                  socket_timeout_in_ms=time_in_el)
+
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(ORIG_DOCS)
+
+        # Create documents in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_origin.collection)
+        mongodb_database = mongodb.engine[mongodb_origin.database]
+        mongodb_collection = mongodb_database[mongodb_origin.collection]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
+        sdc_executor.stop_pipeline(pipeline)
+        assert ORIG_DOCS == [{'name': record.field['name'].value} for record in wiretap.output_records]
+
+    except Exception as e:
+        error_message = e.message
+        assert False, f"The pipeline shouldn't fail. error:{error_message}"
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_origin.database)
+        mongodb.engine.drop_database(mongodb_origin.database)
+
+
+@mongodb('legacy')
+def test_mongodb_oplog_origin_el_support(sdc_builder, sdc_executor, mongodb):
+    """
+    Test EL fields are working: Insert data in MongoDB and then check if MongoDB Oplog origin captures changes in data from MongoDB correctly, when the EL fields configured.
+
+    The pipeline looks like:
+        mongodb_oplog >> wiretap
+    """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
+    input_rec_count = 6
+    input_rec_count2 = 2
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    time_now = int(time.time())
+    mongodb_oplog = pipeline_builder.add_stage('MongoDB Oplog')
+    database_name = get_random_string(ascii_letters, 10)
+    # Specify that MongoDB Oplog needs to read changes occurring after time_now.
+    mongodb_oplog.set_attributes(collection='oplog.rs', initial_timestamp_in_secs='${'+ str(time_now) + ' * SECONDS}', initial_ordinal=1)
+
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_oplog >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Insert documents in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are inserted in that collection.
+        mongodb_database = mongodb.engine[database_name]
+        mongodb_collection = mongodb_database[get_random_string(ascii_letters, 10)]
+        inserted_list = mongodb_collection.insert_many([{'x': i} for i in range(input_rec_count)])
+        assert len(inserted_list.inserted_ids) == input_rec_count
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', input_rec_count)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(wiretap.output_records) == input_rec_count
+        for i, record in enumerate(wiretap.output_records):
+            assert record.field['o']['x'].value == i
+            # Verify the operation type is 'i' which is for 'insert' since we inserted the records earlier.
+            assert record.field['op'].value == 'i'
+            assert record.field['ts']['timestamp'].value.timestamp() >= time_now
+
+        # Now we want to make sure that the previous offset is respected over the
+        # configured initial timestamp and ordinal
+        inserted_list2 = mongodb_collection.insert_many([{'x': i} for i in range(input_rec_count2)])
+        assert len(inserted_list2.inserted_ids) == input_rec_count2
+
+        wiretap.reset()
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', input_rec_count2)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(wiretap.output_records) == 2
+
+    except Exception as e:
+        error_message = e.message
+        assert False, f"The pipeline shouldn't fail. error:{error_message}"
+
+    finally:
+        logger.info('Dropping %s database...', database_name)
+        mongodb.engine.drop_database(database_name)

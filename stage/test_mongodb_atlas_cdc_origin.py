@@ -776,3 +776,73 @@ def _write_in_mongodb_atlas(mongodb, database, collection, raw_data, operation='
         mongodb_collection.update_one(update_filter, new_value)
     else:
         mongodb_collection.delete_one(data)
+
+@pytest.mark.parametrize('read_changes_from', [
+    'CHANGE_STREAM',
+])
+def test_mongodb_atlas_origin_el_support(sdc_builder, sdc_executor, mongodb, read_changes_from):
+    """
+    Test EL fields are working: Read from MongoDB Atlas the records inserted in a collection using Change Stream, and confirm that
+    MongoDB Atlas CDC origin reads them, when the EL fields configured.
+
+    The pipeline looks like:
+        mongodb_atlas_cdc_origin >> wiretap
+    """
+    if read_changes_from == 'CHANGE_STREAM' and mongodb.version[0] < 4:
+        pytest.skip("Initial offset in CHANGE STREAM mode is supported only by MongoDB 4.0 or newer")
+
+    database = get_random_string(string.ascii_letters, 5)
+    collection = get_random_string(string.ascii_letters, 5)
+
+    data = [{'f1': i, 'f2': get_random_string(string.ascii_letters, 4)} for i in range(5)]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    time_in_el = '${2000 * SECONDS}'
+    mongodb_atlas_cdc_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_CDC_ORIGIN)
+    mongodb_atlas_cdc_origin.set_attributes(read_changes_from=read_changes_from,
+                                            include_namespaces=[f'{database}.{collection}'],
+                                            max_connection_idle_time_in_ms=time_in_el,
+                                            max_connection_lifetime_in_ms=time_in_el,
+                                            max_connection_wait_time_in_ms=time_in_el,
+                                            socket_connect_timeout_in_ms=time_in_el,
+                                            socket_read_timeout_in_ms=time_in_el,
+                                            server_selection_timeout_in_ms=time_in_el,
+                                            )
+
+    # Configure MongoDB Atlas CDC to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_cdc_origin.tls_mode = 'NONE'
+        mongodb_atlas_cdc_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    mongodb_atlas_cdc_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build(title=f'Test MongoDB Atlas CDC [read_change_from={read_changes_from}]')\
+        .configure_for_environment(mongodb)
+
+    try:
+        # Start pipeline and verify the documents using wiretap.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        # if read_changes_from == 'CHANGE_STREAM':
+        _write_in_mongodb_atlas(mongodb, database, collection, data)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(data))
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify we only read the records insert after the offset value
+        records = [{'f1': r.field['f1'], 'f2': r.field['f2']} for r in wiretap.output_records]
+        assert len(records) == len(data)
+        assert sorted(records, key=itemgetter('f1')) == data
+
+    except Exception as e:
+        error_message = e.message
+        assert False, f"The pipeline shouldn't fail. error:{error_message}"
+
+    finally:
+        logger.info('Dropping %s database...', database)
+        mongodb.engine.drop_database(database)
