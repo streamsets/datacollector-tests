@@ -294,6 +294,7 @@ def test_buffer_size(
     # fmt: off
     oracle_cdc.set_attributes(
         buffer_size=buffer_size,
+        tables_filter=[{"schemasExclusionPattern": "SYS"}],
         **DefaultConnectionParameters(database)
     )
     # fmt:on
