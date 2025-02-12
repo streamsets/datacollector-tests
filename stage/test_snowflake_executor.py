@@ -365,6 +365,9 @@ def test_snowflake_executor_with_google_cloud_storage_destination(sdc_builder, s
         data_format='WHOLE_FILE',
         file_name_expression="${record:value('/fileInfo/filename')}"
     )
+    gcs_destination.configuration.update({
+        "conf.credentials.connection.path": f'{snowflake_gcs_config.gcp_credentials_path}'
+    })
 
     snowflake_executor = pipeline_builder.add_stage('Snowflake', type='executor')
 
