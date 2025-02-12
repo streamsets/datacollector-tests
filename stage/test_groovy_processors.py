@@ -394,6 +394,73 @@ def test_script_error(sdc_builder, sdc_executor, on_script_error, groovy_version
         assert 'SCRIPTING_06' in e.message
 
 
+@sdc_min_version('6.2.0')
+@pytest.mark.parametrize('record_processing_mode', ['BATCH', 'RECORD'])
+@pytest.mark.parametrize('script_error_as_record_error', [False, True])
+@pytest.mark.parametrize('on_error_record', ['DISCARD', 'TO_ERROR', 'STOP_PIPELINE'])
+def test_script_errors_behavior(
+        sdc_builder, sdc_executor,
+        record_processing_mode,
+        script_error_as_record_error,
+        on_error_record
+):
+    """Testing stage behavior when the script processor raise an error"""
+    builder = sdc_builder.get_pipeline_builder()
+
+    raw_data = '{}'
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    groovy_evaluator = builder.add_stage('Groovy Evaluator', type='processor')
+    groovy_evaluator.script = 'throw new Exception("Custom error")'
+    groovy_evaluator.script_error_as_record_error = script_error_as_record_error
+    groovy_evaluator.on_record_error = on_error_record
+    groovy_evaluator.record_processing_mode = record_processing_mode
+
+    wiretap = builder.add_wiretap()
+
+    origin >> groovy_evaluator >> wiretap.destination
+
+    pipeline = builder.build()
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    except:
+        if not script_error_as_record_error or (script_error_as_record_error and on_error_record == "STOP_PIPELINE"):
+            pipeline_final_status = sdc_executor.get_pipeline_status(pipeline).response.json()
+            status = pipeline_final_status['status']
+            message = pipeline_final_status['attributes']['ERROR_CODE']
+            stacktrace = pipeline_final_status['attributes']['ERROR_STACKTRACE']
+            assert 'RUN_ERROR' == status
+            if record_processing_mode == 'BATCH':
+                assert 'SCRIPTING_06' == message
+            else:
+                assert 'SCRIPTING_05' == message
+            assert 'Custom error' in stacktrace
+            assert 'java.lang.Exception' in stacktrace
+        else:
+            pytest.fail("This pipeline should not fail")
+    else:
+        if (record_processing_mode == 'RECORD' or script_error_as_record_error) and on_error_record == "TO_ERROR":
+            error_records = wiretap.error_records
+            assert len(error_records) == 1
+            if record_processing_mode == 'BATCH':
+                assert error_records[0].header['errorCode'] == 'SCRIPTING_06'
+            else:
+                assert error_records[0].header['errorCode'] == 'SCRIPTING_05'
+            stacktrace = error_records[0].header['errorStackTrace']
+            assert 'Custom error' in stacktrace
+            assert 'java.lang.Exception' in stacktrace
+        elif (record_processing_mode == 'RECORD' or script_error_as_record_error) and on_error_record == "DISCARD":
+            assert len(wiretap.error_records) == 0
+        else:
+            pytest.fail("This pipeline should fail")
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
 
 @sdc_min_version('6.2.0')
 @pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
