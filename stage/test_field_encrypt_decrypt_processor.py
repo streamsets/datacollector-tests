@@ -532,7 +532,7 @@ def test_field_encrypt_out_of_range_config_value(sdc_builder, sdc_executor, aws,
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert config_value_and_error['error'] in error.value.message, f'Expected a CRYPTO_06 error, got "{error.value.message}" instead'
 
-
+@aws('kms')
 @sdc_min_version('3.17.0')
 def test_field_encrypt_el(sdc_builder, sdc_executor):
     """Test to verify that EL functions work by using Base64 EL
@@ -734,3 +734,327 @@ def test_field_encrypt_with_assume_role(sdc_builder, sdc_executor, aws, use_inst
     # Decrypt received value using aws_encryption_sdk for verification purpose.
     actual_value, _ = aws.decrypt(ciphertext_encoded.value)
     assert actual_value == expected_plaintext
+
+
+@aws('kms')
+@sdc_min_version('6.2.0')
+def test_field_decrypt_invalid_aws_credentials(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Decrypt Fields processor can decrypt a field with invalid AWS credentials.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> wiretap
+    """
+    expected_plaintext = MESSAGE_TEXT.encode()
+
+    ciphertext, _ = aws.encrypt(expected_plaintext)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json.dumps({'message': base64.b64encode(ciphertext).decode()}),
+                                       stop_after_first_batch=True)
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter', type='processor')
+    field_type_converter_configs = [{'fields': ['/message'], 'targetType': 'BYTE_ARRAY'}]
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=field_type_converter_configs)
+
+    base64_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
+    base64_decoder.set_attributes(
+        fields_to_decode=[{'originFieldPath': '/message', 'resultFieldPath': '/message'}]
+    )
+
+    field_decrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_decrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='DECRYPT')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> trash
+
+    pipeline = (pipeline_builder.build('Field Decryption Pipeline with invalid AWS Credentials')
+                .configure_for_environment(aws))
+
+    sdc_executor.add_pipeline(pipeline)
+
+    pipeline.stages.get(label=field_decrypt.label).set_attributes(
+        primary_key_provider=aws.kms_key_provider,
+        authentication_method='WITH_CREDENTIALS',
+        access_key_id='invalid-access-key-id',
+        secret_access_key='invalid-secret-access-key'
+    )
+    try:
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here.'
+    except Exception as error:
+        assert error.issues['issueCount'] == 2
+
+        assert 'CRYPTO_01' in error.issues['stageIssues']['EncryptandDecryptFields_01'][0]['message']
+        assert 'CRYPTO_01' in error.issues['stageIssues']['EncryptandDecryptFields_01'][1]['message']
+
+
+@aws('kms')
+@sdc_min_version('6.2.0')
+def test_field_decrypt_invalid_kms_key_arn(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Decrypt Fields processor can decrypt a field with invalid kms key arn.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> wiretap
+    """
+    expected_plaintext = MESSAGE_TEXT.encode()
+
+    ciphertext, _ = aws.encrypt(expected_plaintext)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json.dumps({'message': base64.b64encode(ciphertext).decode()}),
+                                       stop_after_first_batch=True)
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter', type='processor')
+    field_type_converter_configs = [{'fields': ['/message'], 'targetType': 'BYTE_ARRAY'}]
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=field_type_converter_configs)
+
+    base64_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
+    base64_decoder.set_attributes(
+        fields_to_decode=[{'originFieldPath': '/message', 'resultFieldPath': '/message'}]
+    )
+
+    field_decrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_decrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='DECRYPT')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> trash
+
+    pipeline = (pipeline_builder.build('Field Decryption Pipeline with invalid KMS Key ARN')
+                .configure_for_environment(aws))
+
+    sdc_executor.add_pipeline(pipeline)
+
+    pipeline.stages.get(label=field_decrypt.label).set_attributes(
+        primary_key_provider=aws.kms_key_provider,
+        authentication_method='WITH_CREDENTIALS',
+        access_key_id=aws.aws_access_key_id,
+        secret_access_key=aws.aws_secret_access_key,
+        kms_key_arn='invalid-kms-key-arn'
+    )
+
+    try:
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here.'
+    except Exception as error:
+        assert error.issues['issueCount'] == 1
+
+        assert 'CRYPTO_08' in error.issues['stageIssues']['EncryptandDecryptFields_01'][0]['message']
+
+
+@aws('kms')
+@sdc_min_version('6.2.0')
+def test_field_decrypt_invalid_region_and_endpoint(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Decrypt Fields processor can decrypt a field with invalid region and endpoint.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> wiretap
+    """
+    expected_plaintext = MESSAGE_TEXT.encode()
+
+    ciphertext, _ = aws.encrypt(expected_plaintext)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json.dumps({'message': base64.b64encode(ciphertext).decode()}),
+                                       stop_after_first_batch=True)
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter', type='processor')
+    field_type_converter_configs = [{'fields': ['/message'], 'targetType': 'BYTE_ARRAY'}]
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=field_type_converter_configs)
+
+    base64_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
+    base64_decoder.set_attributes(
+        fields_to_decode=[{'originFieldPath': '/message', 'resultFieldPath': '/message'}]
+    )
+
+    field_decrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_decrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='DECRYPT')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> trash
+
+    pipeline = (pipeline_builder.build('Field Decryption Pipeline with invalid KMS Key ARN')
+                .configure_for_environment(aws))
+
+    sdc_executor.add_pipeline(pipeline)
+
+    pipeline.stages.get(label=field_decrypt.label).set_attributes(
+        primary_key_provider=aws.kms_key_provider,
+        authentication_method='WITH_CREDENTIALS',
+        access_key_id=aws.aws_access_key_id,
+        secret_access_key=aws.aws_secret_access_key,
+        region_definition_for_kms="SPECIFY_REGIONAL_ENDPOINT",
+        regional_endpoint_for_kms=f"kms.{aws.region}.streamsets.amazonaws.com",
+    )
+
+    try:
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here.'
+    except Exception as error:
+        assert error.issues['issueCount'] == 1
+
+        assert 'CRYPTO_09' in error.issues['stageIssues']['EncryptandDecryptFields_01'][0]['message']
+
+
+@aws('kms')
+@sdc_min_version('6.2.0')
+def test_field_encrypt_with_invalid_aws_credentials(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Encrypt Fields processor can encrypt with invalid AWS credentials.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_encrypt >> wiretap
+    """
+    raw_data = json.dumps(dict(message=MESSAGE_TEXT))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    field_encrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_encrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 data_key_caching=False,
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='ENCRYPT')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_encrypt >> trash
+
+    pipeline = (pipeline_builder.build('Field Encryption Pipeline with invalid AWS credentials')
+                .configure_for_environment(aws))
+    sdc_executor.add_pipeline(pipeline)
+
+    pipeline.stages.get(label=field_encrypt.label).set_attributes(
+        primary_key_provider=aws.kms_key_provider,
+        authentication_method='WITH_CREDENTIALS',
+        access_key_id='invalid-access-key-id',
+        secret_access_key='invalid-secret-access-key'
+    )
+    try:
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here.'
+    except Exception as error:
+        assert error.issues['issueCount'] == 2
+
+        assert 'CRYPTO_01' in error.issues['stageIssues']['EncryptandDecryptFields_01'][0]['message']
+        assert 'CRYPTO_01' in error.issues['stageIssues']['EncryptandDecryptFields_01'][1]['message']
+
+
+@aws('kms')
+@sdc_min_version('6.2.0')
+def test_field_encrypt_with_invalid_kms_key_arn(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Encrypt Fields processor can encrypt with invalid kms key arn.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_encrypt >> wiretap
+    """
+    raw_data = json.dumps(dict(message=MESSAGE_TEXT))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    field_encrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_encrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 data_key_caching=False,
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='ENCRYPT')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_encrypt >> trash
+
+    pipeline = (pipeline_builder.build('Field Encryption Pipeline with invalid KMS Key ARN')
+                .configure_for_environment(aws))
+    sdc_executor.add_pipeline(pipeline)
+
+    pipeline.stages.get(label=field_encrypt.label).set_attributes(
+        primary_key_provider=aws.kms_key_provider,
+        authentication_method='WITH_CREDENTIALS',
+        access_key_id=aws.aws_access_key_id,
+        secret_access_key=aws.aws_secret_access_key,
+        kms_key_arn='invalid-kms-key-arn'
+    )
+
+    try:
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here.'
+    except Exception as error:
+        assert error.issues['issueCount'] == 1
+
+        assert 'CRYPTO_08' in error.issues['stageIssues']['EncryptandDecryptFields_01'][0]['message']
+
+
+@aws('kms')
+@sdc_min_version('6.2.0')
+def test_field_encrypt_with_invalid_region_and_endpoints(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Encrypt Fields processor can encrypt with invalid region and endpoint.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_encrypt >> wiretap
+    """
+    raw_data = json.dumps(dict(message=MESSAGE_TEXT))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    field_encrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_encrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 data_key_caching=False,
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='ENCRYPT')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_encrypt >> trash
+
+    pipeline = (pipeline_builder.build('Field Encryption Pipeline with invalid region and endpoint')
+                .configure_for_environment(aws))
+    sdc_executor.add_pipeline(pipeline)
+
+    pipeline.stages.get(label=field_encrypt.label).set_attributes(
+        primary_key_provider=aws.kms_key_provider,
+        authentication_method='WITH_CREDENTIALS',
+        access_key_id=aws.aws_access_key_id,
+        secret_access_key=aws.aws_secret_access_key,
+        region_definition_for_kms="SPECIFY_REGIONAL_ENDPOINT",
+        regional_endpoint_for_kms=f"kms.{aws.region}.streamsets.amazonaws.com",
+    )
+
+    try:
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here.'
+    except Exception as error:
+        assert error.issues['issueCount'] == 1
+
+        assert 'CRYPTO_09' in error.issues['stageIssues']['EncryptandDecryptFields_01'][0]['message']
