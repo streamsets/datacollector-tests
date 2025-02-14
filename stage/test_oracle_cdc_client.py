@@ -1878,3 +1878,41 @@ def test_redo_log_with_removed_column(
     assert len(output_records) == 10, 'Output records should match the inserts for the existing table'
     assert len(error_records) == 0, 'No error records expected'
     assert all([[(k, int(v.value)) for k,v in output_record.field.items()] == [("ID", id+1)] for id,output_record in enumerate(output_records)])
+
+
+@sdc_min_version("6.2.0")
+def test_pipeline_shuts_down_properly_scanning_standby_db(
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    test_name,
+):
+    """ As per INT-3316 when mining standby databases the pipeline is lasting 'Archived Logs Availability Check Frequency' to stop.
+    It is due to the fact that some threads are not properly attending to the pipeline stop event. This test is about to ensure this is
+    not happening anymore. """
+
+    handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
+    pipeline_builder = handler.get_pipeline_builder()
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        tables_filter=[{"schemasExclusionPattern": "SYS"}],
+        database_role="STANDBY",
+        maximum_wait_for_archive_logs_in_ms="${2 * HOURS * 1000}",
+        archived_logs_availability_check_frequency_in_ms="${15 * MINUTES * 1000}",  # More than the timeout when waiting for status
+        **DefaultConnectionParameters(database) 
+    )
+    trash = pipeline_builder.add_stage(TRASH)
+
+    oracle_cdc >> trash
+    pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
+    work = handler.add_pipeline(pipeline)
+
+    handler.start_work(work)
+    time.sleep(10)
+    sdc_executor.stop_pipeline(pipeline)
+
+    # If the wait operation reaches the timeout, then the test is failing as not all threads are ending.
+    sdc_executor.wait_for_pipeline_status(pipeline, 'STOPPED', timeout_sec=30)
